@@ -26,6 +26,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include "adc.h"
+#include "dac.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -92,21 +93,11 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  // 硬件自检：连续快速翻转 6 次 LED (PB0)，供肉眼直接观察硬件工作状态
-  for (int i = 0; i < 6; i++)
-  {
-      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
-      HAL_Delay(150); // 延时 150 ms
-  }
-  // 保持 LED 在自检完后点亮（如果是低电平点亮，输出 RESET）
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
   
-  // 通过串口底层以阻塞方式直接物理发送调试字符串，跳过 printf，测试 UART 驱动 and 时钟波特率是否一致
-  char test_str[] = "\r\n[Self-Test] Clock & GPIO & USART1 Hardware OK!\r\n";
-  HAL_UART_Transmit(&huart1, (uint8_t*)test_str, sizeof(test_str) - 1, HAL_MAX_DELAY);
-
+ 
   /* 初始化 ADC1 外设及多通道扫描配置 */
   MX_ADC1_Init();
+  MX_DAC1_Init();
   /* USER CODE END 2 */
 
   /* Init scheduler */

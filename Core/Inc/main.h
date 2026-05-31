@@ -63,6 +63,10 @@ void Error_Handler(void);
 #define V2_IN_Pin      GPIO_PIN_1
 #define CO_OUT_Pin     GPIO_PIN_2
 #define VO_OUT_Pin     GPIO_PIN_3
+#define IOC_Pin        GPIO_PIN_4
+#define IOC_GPIO_Port  GPIOA
+#define OF_EN_Pin      GPIO_PIN_0
+#define OF_EN_GPIO_Port GPIOB
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

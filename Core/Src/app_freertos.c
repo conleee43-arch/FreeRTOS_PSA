@@ -26,8 +26,11 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 #include "uart_dma_driver.h"
 #include "adc_dma_driver.h"
+#include "dac_control.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -70,8 +73,40 @@ static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
 {
     /* 物理回显：非阻塞原路送回 */
     (void)UartDma_Transmit_NonBlocking(&g_uart1_dma, data, len);
-    /* 物理指示：翻转 PB0 LED 指示收到数据包 */
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+
+    if (len > 0U)
+    {
+        char cmd_buf[64];
+        uint16_t copy_len = (len < (sizeof(cmd_buf) - 1U)) ? len : (uint16_t)(sizeof(cmd_buf) - 1U);
+        memcpy(cmd_buf, data, copy_len);
+        cmd_buf[copy_len] = '\0';
+
+        char *p_val = strstr(cmd_buf, "SetDAC:");
+        if (p_val != NULL)
+        {
+            p_val += 7;
+            char *endptr;
+            float target_val = strtof(p_val, &endptr);
+            if (p_val != endptr)
+            {
+                DAC_Control_UpdatePfcTargetCurrent(target_val);
+            }
+        }
+
+        char *p_of = strstr(cmd_buf, "SetOF:");
+        if (p_of != NULL)
+        {
+            p_of += 6;
+            if (*p_of == '1')
+            {
+                HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_SET);
+            }
+            else if (*p_of == '0')
+            {
+                HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_RESET);
+            }
+        }
+    }
 }
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -145,6 +180,9 @@ void StartDefaultTask(void *argument)
   static char measure_buf[128];    /* 非阻塞 DMA 入队前仍需稳定的格式化源缓冲。 */
   static char code_buf[96];
   static uint32_t print_tick = 0;  /* 🟢 极重要：改为 static */
+  static uint32_t dac_tick = 0;
+
+  DAC_Control_Start(0U);
 
   /* 1. 初始化 ADC DMA 采集驱动 (自动开启芯片硬件自校准和 DMA 循环传输) */
   HAL_StatusTypeDef init_res = Measure_Init(&hadc1);
@@ -165,11 +203,18 @@ void StartDefaultTask(void *argument)
   /* 任务无限循环 */
   for(;;)
   {
+    uint32_t current_tick = osKernelGetTickCount();
+
     /* 2. 高频状态机更新：计算 CNDTR 指针，无锁定位新 Slot 组，触发自适应滑动滤波 and 出厂参数自校准 */
     Measure_Update();
 
+    if ((current_tick - dac_tick) >= 100U)
+    {
+        dac_tick = current_tick;
+        DAC_Control_SetPfcCurrent(DAC_Control_GetPfcTargetCurrent());
+    }
+
     /* 3. 每隔 1000 毫秒，格式化输出校准滤波后的遥测数据包 */
-    uint32_t current_tick = osKernelGetTickCount();
     if ((current_tick - print_tick) >= 1000U)
     {
         if (Measure_IsReady())
@@ -189,8 +234,6 @@ void StartDefaultTask(void *argument)
                 /* GUI 主协议帧优先；ADC code 诊断帧按最佳努力发送。 */
                 if (UartDma_Transmit_NonBlocking(&g_uart1_dma, (const uint8_t*)measure_buf, (uint16_t)measure_len) == HAL_OK)
                 {
-                    /* 翻转 PB0 LED 指示灯，肉眼观测遥测心跳 */
-                    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
                     print_tick = current_tick;
 
                     int code_len = snprintf(code_buf, sizeof(code_buf),

@@ -485,6 +485,25 @@ class PSAFirmwareConsole(QMainWindow):
         self.send_dac_btn.setEnabled(False)
         dac_layout.addWidget(self.send_dac_btn)
 
+        # OF_EN 状态展示
+        status_row = QHBoxLayout()
+        status_row.addWidget(QLabel("OF_EN 物理状态:", dac_group))
+        self.lbl_of_status = QLabel("⚪ 离线状态 (OFFLINE)", dac_group)
+        self.lbl_of_status.setStyleSheet("color: #64748b; font-weight: bold; font-family: Segoe UI; font-size: 13px;")
+        status_row.addWidget(self.lbl_of_status)
+        status_row.addStretch(1)
+        dac_layout.addLayout(status_row)
+
+        # OF_EN 引脚状态控制双联按钮
+        of_en_layout = QHBoxLayout()
+        self.btn_of_en_on = QPushButton("使能 (OF_EN = 1)", dac_group)
+        self.btn_of_en_on.setEnabled(False)
+        self.btn_of_en_off = QPushButton("禁用 (OF_EN = 0)", dac_group)
+        self.btn_of_en_off.setEnabled(False)
+        of_en_layout.addWidget(self.btn_of_en_on)
+        of_en_layout.addWidget(self.btn_of_en_off)
+        dac_layout.addLayout(of_en_layout)
+
         # 固件接口提示
         lbl_tip = QLabel("提示：固件内部默认 50ms 持续输出 4A。您可以通过 GUI 发送 'SetDAC:x.xx' 控制指令进行动态设定。", dac_group)
         lbl_tip.setWordWrap(True)
@@ -627,6 +646,10 @@ class PSAFirmwareConsole(QMainWindow):
         self.dac_slider.valueChanged.connect(self.sync_slider_to_spin)
         self.send_dac_btn.clicked.connect(self.transmit_dac_setting)
 
+        # OF_EN 保护控制联动
+        self.btn_of_en_on.clicked.connect(lambda: self.transmit_of_en_setting(1))
+        self.btn_of_en_off.clicked.connect(lambda: self.transmit_of_en_setting(0))
+
     def scan_ports(self):
         """扫描可用端口"""
         if self.ser and self.ser.is_open:
@@ -732,6 +755,13 @@ class PSAFirmwareConsole(QMainWindow):
         self.disconnect_btn.setEnabled(connected)
         self.send_btn.setEnabled(connected)
         self.send_dac_btn.setEnabled(connected)
+        self.btn_of_en_on.setEnabled(connected)
+        self.btn_of_en_off.setEnabled(connected)
+
+        if connected:
+            self.update_of_en_ui_styles(0)
+        else:
+            self.update_of_en_ui_styles(-1)
 
     @Slot(str)
     def handle_line_received(self, line: str):
@@ -795,6 +825,54 @@ class PSAFirmwareConsole(QMainWindow):
             self.last_dac_current = current_val
         except Exception as e:
             self.status_bar.showMessage(f"下发设定失败: {str(e)}")
+
+    def update_of_en_ui_styles(self, state: int):
+        """根据当前状态，动态更新 OF_EN 按钮样式和文本指示"""
+        if state == 1:
+            self.lbl_of_status.setText("🟢 已使能 (ON)")
+            self.lbl_of_status.setStyleSheet("color: #10b981; font-weight: bold; font-family: Segoe UI; font-size: 13px;")
+            self.btn_of_en_on.setStyleSheet(
+                "background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 #10b981, stop:1 #059669); "
+                "border: 2px solid #34d399; font-weight: bold; color: white;"
+            )
+            self.btn_of_en_off.setStyleSheet(
+                "background: #1e1e2f; border: 1px solid #334155; color: #64748b; font-weight: normal;"
+            )
+        elif state == 0:
+            self.lbl_of_status.setText("🔴 已禁用 (OFF)")
+            self.lbl_of_status.setStyleSheet("color: #ef4444; font-weight: bold; font-family: Segoe UI; font-size: 13px;")
+            self.btn_of_en_on.setStyleSheet(
+                "background: #1e1e2f; border: 1px solid #334155; color: #64748b; font-weight: normal;"
+            )
+            self.btn_of_en_off.setStyleSheet(
+                "background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 #ef4444, stop:1 #dc2626); "
+                "border: 2px solid #f87171; font-weight: bold; color: white;"
+            )
+        else:
+            self.lbl_of_status.setText("⚪ 离线状态 (OFFLINE)")
+            self.lbl_of_status.setStyleSheet("color: #64748b; font-weight: bold; font-family: Segoe UI; font-size: 13px;")
+            self.btn_of_en_on.setStyleSheet(
+                "background: #1e1e2f; border: 1px solid #334155; color: #475569; font-weight: normal;"
+            )
+            self.btn_of_en_off.setStyleSheet(
+                "background: #1e1e2f; border: 1px solid #334155; color: #475569; font-weight: normal;"
+            )
+
+    def transmit_of_en_setting(self, state: int):
+        """通过串口发送 OF_EN 保护控制命令
+        格式: SetOF:<0/1> (例如 SetOF:1)
+        """
+        if not self.ser or not self.ser.is_open:
+            return
+
+        cmd = f"SetOF:{state}\r\n"
+        try:
+            self.ser.write(cmd.encode('utf-8'))
+            self.status_bar.showMessage(f"已下发 OF_EN 设定: {cmd.strip()}")
+            self.append_log(f">>> 发送指令: {cmd.strip()}", is_system=True)
+            self.update_of_en_ui_styles(state)
+        except Exception as e:
+            self.status_bar.showMessage(f"下发 OF_EN 设定失败: {str(e)}")
 
     def send_command(self):
         """发送终端输入的手动串口命令"""

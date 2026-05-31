@@ -1,0 +1,14 @@
+{
+  "id": "800bf34e-90cd-4365-aab9-7d50fc1b700f",
+  "name": "D:\\zhihai\\Software\\PSA",
+  "projectResources": {
+    "resources": [
+      {
+        "gitFolder": {
+          "folderUri": "file://D:/zhihai/Software/PSA",
+          "allowWrite": true
+        }
+      }
+    ]
+  }
+}
