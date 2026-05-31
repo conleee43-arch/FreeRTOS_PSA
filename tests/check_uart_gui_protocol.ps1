@@ -63,6 +63,49 @@ if (-not $firmware.Contains('sizeof(code_buf)')) {
     throw 'Firmware raw ADC code diagnostics should be formatted in a separate UART DMA frame.'
 }
 
+foreach ($needle in @(
+    'strstr(cmd_buf, "SetDAC:")',
+    'strtof(p_val, &endptr)',
+    'DAC_Control_UpdatePfcTargetCurrent(target_val)',
+    'DAC_Control_SetPfcCurrent(DAC_Control_GetPfcTargetCurrent())',
+    'strstr(cmd_buf, "SetOF:")',
+    'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_SET)',
+    'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_RESET)'
+)) {
+    if (-not $firmware.Contains($needle)) {
+        throw "Firmware UART control path is missing expected implementation: $needle"
+    }
+}
+
+foreach ($needle in @(
+    'cmd = f"SetDAC:{current_val:.2f}\r\n"',
+    'cmd = f"SetOF:{state}\r\n"',
+    'self.dac_spin.setRange(0.00, 10.00)',
+    'self.btn_of_en_on.clicked.connect(lambda: self.transmit_of_en_setting(1))',
+    'self.btn_of_en_off.clicked.connect(lambda: self.transmit_of_en_setting(0))'
+)) {
+    if (-not $gui.Contains($needle)) {
+        throw "GUI control path is missing expected implementation: $needle"
+    }
+}
+
+$dacControlPath = Join-Path $repoRoot 'Core/Src/dac_control.c'
+$dacControl = Get-Content -Raw -LiteralPath $dacControlPath
+foreach ($needle in @(
+    'if (current_A < 0.0f)',
+    'if (current_A > 10.0f)',
+    'current_A = 10.0f;',
+    'DAC_Control_SetValue(val_u);'
+)) {
+    if (-not $dacControl.Contains($needle)) {
+        throw "DAC control module is missing expected safety behavior: $needle"
+    }
+}
+
+if (Test-Path -LiteralPath (Join-Path $repoRoot 'PSA')) {
+    throw 'Nested PSA/ subproject must not exist inside the FreeRTOS_PSA root project.'
+}
+
 $maxMeasureLine = "`r`n[Measure] V1:999.99V V2:999.99V CO:-99.99A VO:999.99V T:-273.1C Vref:9.999V"
 $measureLineBytes = [System.Text.Encoding]::ASCII.GetByteCount($maxMeasureLine)
 
