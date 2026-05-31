@@ -16,6 +16,9 @@
 | [ARCH_technical-specs.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/ARCH_technical-specs.md) | 170MHz 时钟树、VREFBUF 电压配置、ADC/USART 底层 DMA 映射及 Table-Driven 解算属性表。 | 数据帧编解码格式、具体的高阶滤波算法代码与应用层业务。 | 涉及引脚调整、时钟变更、通道配置或物理增益修改时 |
 | [STANDARDS_interface.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/STANDARDS_interface.md) | 串口 Measure 文本行协议、GUI `MEASURE_PATTERN` 匹配正则、`SetDAC` 指令、测试校验脚本逻辑。 | 底层 DMA 中断自愈的具体寄存器操作、中值排序滤波的内部数学算法。 | 修改通信协议、新增交互命令、或修改 GUI 接收匹配规则时 |
 | [LOGIC_adc-dsp.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/LOGIC_adc-dsp.md) | 5点滑动中值滤波、指数 EMA 滤波、温度双点线性插值、常规通道二阶解算链路的具体逻辑及数学公式。 | 串口 DMA 数据拷贝细节、Keil 工程配置参数。 | 修改数据转换比例、微调滤波窗口或优化标定算法时 |
+| [LOGIC_output-protection.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/LOGIC_output-protection.md) | 过温/过压/过流保护状态机状态转移图、跳闸迟滞计算、2秒观察期自恢复纯逻辑。 | 具体引脚配置代码、中断配置。 | 开始编写保护纯状态机 output_protection.c 时 |
+| [LOGIC_calc-control.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/LOGIC_calc-control.md) | 内阻计算纯状态机（WAIT_SAFE 至 MONITOR 九段设计）、R=(U1-U2)/(I1-I2) 滤波求解数学公式。 | 串口 DMA 数据搬移细节、GPIO 初始化。 | 开始编写内阻纯状态机 calc_control.c 时 |
+
 
 ---
 
@@ -30,6 +33,8 @@
 | **底层硬件与通道属性修改** | `AGENTS.md` + [GUIDE_developer.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/GUIDE_developer.md) + [ARCH_technical-specs.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/ARCH_technical-specs.md) | 保证硬件时钟、引脚分配、VREFBUF 参数与二阶计算因子的一致性。 |
 | **上位机交互与串口格式更改** | `AGENTS.md` + [GUIDE_developer.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/GUIDE_developer.md) + [STANDARDS_interface.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/STANDARDS_interface.md) | 确保固件格式化输出与 GUI 正则匹配机制保持 100% 同步，不破坏测试闭环。 |
 | **文档治理与系统维护** | `AGENTS.md` + [ARCH_documentation-governance.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/ARCH_documentation-governance.md) | 升级文档树，清理冗余规则，执行 `doc sweep`。 |
+| **输出保护状态机开发与验证** | `AGENTS.md` + [GUIDE_developer.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/GUIDE_developer.md) + [LOGIC_output-protection.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/LOGIC_output-protection.md) | 规范保护状态机的跳转逻辑、时效判定、断开次序和回归测试规范。 |
+| **内阻计算状态机开发与验证** | `AGENTS.md` + [GUIDE_developer.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/GUIDE_developer.md) + [LOGIC_calc-control.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/LOGIC_calc-control.md) | 规范九步计算状态机的时序图、阶跃电流DAC控制与电阻公式解算机制。 |
 
 ---
 

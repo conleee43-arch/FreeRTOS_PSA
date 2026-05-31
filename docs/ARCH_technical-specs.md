@@ -59,9 +59,9 @@ void SystemClock_Config(void)
 
 | 硬件外设 | 触发事件 | DMA 资源 | 传输宽度 | 传输模式 | 硬件优先级 |
 |---|---|---|---|---|---|
-| **ADC1** | 多通道扫描就绪 | DMA1 Channel 1 | 16-bit (HalfWord) | Circular (循环乒乓) | High (高优先级) |
-| **USART1_RX** | 触发 Idle 空闲中断 | DMA1 Channel 2 | 8-bit (Byte) | Normal (不定长自愈) | Medium (中优先级) |
-| **USART1_TX** | 缓冲区发送为空 | DMA1 Channel 3 | 8-bit (Byte) | Normal (非阻塞链式) | Medium (中优先级) |
+| **ADC1** | 多通道扫描就绪 | DMA1 Channel 3 | 16-bit (HalfWord) | Circular (循环乒乓) | High (高优先级) |
+| **USART1_RX** | 触发 Idle 空闲中断 | DMA1 Channel 1 | 8-bit (Byte) | Normal (不定长自愈) | Medium (中优先级) |
+| **USART1_TX** | 缓冲区发送为空 | DMA1 Channel 2 | 8-bit (Byte) | Normal (非阻塞链式) | Medium (中优先级) |
 
 ---
 
