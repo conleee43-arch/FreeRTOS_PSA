@@ -95,15 +95,28 @@ foreach ($needle in @(
     'if (current_A < 0.0f)',
     'if (current_A > 10.0f)',
     'current_A = 10.0f;',
-    'DAC_Control_SetValue(val_u);',
-    'void Output_Control_Disable(void)',
-    'void Output_Control_Enable(void)',
-    'void Output_Control_SetCurrent(float current_A)',
-    'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_RESET)',
-    'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_SET)'
+    'DAC_Control_SetValue(val_u);'
 )) {
     if (-not $dacControl.Contains($needle)) {
-        throw "DAC control module is missing expected safety behavior or unified Output Control interfaces: $needle"
+        throw "DAC control module is missing expected safety behavior: $needle"
+    }
+}
+
+$outputControlPath = Join-Path $repoRoot 'Core/Src/output_control.c'
+$outputControl = Get-Content -Raw -LiteralPath $outputControlPath
+foreach ($needle in @(
+    'void Output_Control_Init(void)',
+    'void Output_Control_Enable(void)',
+    'void Output_Control_Disable(void)',
+    'void Output_Control_SetCurrent(float current_A)',
+    'void Output_Control_ClearFaultOutput(void)',
+    'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_RESET)',
+    'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_SET)',
+    'DAC_Control_UpdatePfcTargetCurrent(0.0f)',
+    'DAC_Control_SetPfcCurrent(0.0f)'
+)) {
+    if (-not $outputControl.Contains($needle)) {
+        throw "Output control module is missing expected implementation: $needle"
     }
 }
 

@@ -31,6 +31,7 @@
 #include "uart_dma_driver.h"
 #include "adc_dma_driver.h"
 #include "dac_control.h"
+#include "output_control.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

@@ -85,6 +85,10 @@ Assert-Contains 'MDK-ARM\FreeRTOS_PSA.uvprojx' `
     'Keil project does not include dac_control.c.'
 
 Assert-Contains 'MDK-ARM\FreeRTOS_PSA.uvprojx' `
+    '<FilePath>../Core/Src/output_control.c</FilePath>' `
+    'Keil project does not include output_control.c.'
+
+Assert-Contains 'MDK-ARM\FreeRTOS_PSA.uvprojx' `
     '<FilePath>../Core/Src/dac.c</FilePath>' `
     'Keil project does not include dac.c.'
 

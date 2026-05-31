@@ -87,10 +87,6 @@ float DAC_Control_GetPfcTargetCurrent(void);
   */
 void DAC_Control_UpdatePfcTargetCurrent(float current_A);
 
-void Output_Control_Disable(void);
-void Output_Control_Enable(void);
-void Output_Control_SetCurrent(float current_A);
-
 #ifdef __cplusplus
 }
 #endif
