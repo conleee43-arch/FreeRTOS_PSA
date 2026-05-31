@@ -99,11 +99,11 @@ static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
             p_of += 6;
             if (*p_of == '1')
             {
-                HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_SET);
+                Output_Control_Enable();
             }
             else if (*p_of == '0')
             {
-                HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_RESET);
+                Output_Control_Disable();
             }
         }
     }
@@ -211,7 +211,7 @@ void StartDefaultTask(void *argument)
     if ((current_tick - dac_tick) >= 100U)
     {
         dac_tick = current_tick;
-        DAC_Control_SetPfcCurrent(DAC_Control_GetPfcTargetCurrent());
+        Output_Control_SetCurrent(DAC_Control_GetPfcTargetCurrent());
     }
 
     /* 3. 每隔 1000 毫秒，格式化输出校准滤波后的遥测数据包 */

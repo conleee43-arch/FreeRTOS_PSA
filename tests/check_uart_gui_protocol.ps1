@@ -67,10 +67,10 @@ foreach ($needle in @(
     'strstr(cmd_buf, "SetDAC:")',
     'strtof(p_val, &endptr)',
     'DAC_Control_UpdatePfcTargetCurrent(target_val)',
-    'DAC_Control_SetPfcCurrent(DAC_Control_GetPfcTargetCurrent())',
+    'Output_Control_SetCurrent(DAC_Control_GetPfcTargetCurrent())',
     'strstr(cmd_buf, "SetOF:")',
-    'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_SET)',
-    'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_RESET)'
+    'Output_Control_Enable()',
+    'Output_Control_Disable()'
 )) {
     if (-not $firmware.Contains($needle)) {
         throw "Firmware UART control path is missing expected implementation: $needle"
@@ -95,10 +95,15 @@ foreach ($needle in @(
     'if (current_A < 0.0f)',
     'if (current_A > 10.0f)',
     'current_A = 10.0f;',
-    'DAC_Control_SetValue(val_u);'
+    'DAC_Control_SetValue(val_u);',
+    'void Output_Control_Disable(void)',
+    'void Output_Control_Enable(void)',
+    'void Output_Control_SetCurrent(float current_A)',
+    'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_RESET)',
+    'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_SET)'
 )) {
     if (-not $dacControl.Contains($needle)) {
-        throw "DAC control module is missing expected safety behavior: $needle"
+        throw "DAC control module is missing expected safety behavior or unified Output Control interfaces: $needle"
     }
 }
 
