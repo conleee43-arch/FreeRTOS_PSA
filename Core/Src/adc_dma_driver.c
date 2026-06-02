@@ -41,7 +41,7 @@ __attribute__((aligned(32))) static uint16_t g_adc_dma_buffer[ADC_DRV_DMA_BUF_SI
 static ADC_HandleTypeDef  *gp_hadc = (ADC_HandleTypeDef *)0;             /* 绑定的硬件 ADC 句柄 */
 static Median_Filter_t     g_filters[ADC_DRV_CHANNEL_CNT];              /* 6个通道的中值滤波器 */
 static uint32_t            g_last_processed_slot = INVALID_SLOT_INDEX;  /* 上一个已处理的 DMA 组索引 */
-static bool                g_driver_ready = false;                       /* 驱动就绪标志 */
+static volatile bool       g_driver_ready = false;                       /* 驱动就绪标志 */
 static bool                g_simulation_mode = false;                    /* 软件仿真测试模式 */
 
 /* ==========================================
@@ -462,7 +462,6 @@ void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc)
 {
     if (hadc == gp_hadc)
     {
-        Measure_Update();
     }
 }
 
@@ -473,7 +472,6 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
     if (hadc == gp_hadc)
     {
-        Measure_Update();
     }
 }
 

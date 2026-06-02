@@ -165,6 +165,7 @@ standard names. */
 
 /* USER CODE BEGIN Defines */
 /* 撤销默认的宏映射，以便在 stm32g4xx_it.c 中手动编写 100% 物理跳转的桥接 Handler */
+#define configCHECK_FOR_STACK_OVERFLOW 2
 #undef vPortSVCHandler
 #undef xPortPendSVHandler
 /* USER CODE END Defines */

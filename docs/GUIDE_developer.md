@@ -22,27 +22,67 @@ UART 接收驱动的解包与自愈不采用高开销的中断实时解算，而
 void StartUartTask(void *argument)
 {
   extern UART_HandleTypeDef huart1;
-  
-  if (UartDma_Init(&g_uart1_dma, 
-                   &huart huart1, 
-                   g_usart1_rx_dma_buf, 
-                   USART1_RX_DMA_BUF_SIZE, 
-                   g_usart1_rx_main_buf, 
+
+  static UartMsg_t s_backlog_msg;
+  static uint8_t s_backlog_valid = 0U;
+  static uint8_t s_backlog_retry_count = 0U;
+
+  if (UartDma_Init(&g_uart1_dma,
+                   &huart1,
+                   g_usart1_rx_dma_buf,
+                   USART1_RX_DMA_BUF_SIZE,
+                   g_usart1_rx_main_buf,
                    USART1_RX_MAIN_BUF_SIZE) != HAL_OK)
   {
       Error_Handler();
   }
 
   char task2_msg[] = "\r\n[Task 2] UART DMA NonBlocking Running!\r\n";
+  UartQueue_PostBytes(MSG_TYPE_BOOT, (const uint8_t*)task2_msg, (uint16_t)(sizeof(task2_msg) - 1U));
+
   for(;;)
   {
-    (void)UartDma_Transmit_NonBlocking(&g_uart1_dma, (const uint8_t*)task2_msg, (uint16_t)(sizeof(task2_msg) - 1U));
-    
-    for (uint16_t i = 0U; i < 400U; i++)
+    UartDma_Poll(&g_uart1_dma, Usart1_RxParser_Callback);
+
+    uint8_t has_msg = 0U;
+
+    if (s_backlog_valid != 0U)
     {
-        UartDma_Poll(&g_uart1_dma, Usart1_RxParser_Callback);
-        osDelay(5);
+        has_msg = 1U;
     }
+    else
+    {
+        if (osMessageQueueGet(uartMsgQueueHandle, &s_backlog_msg, NULL, 0U) == osOK)
+        {
+            s_backlog_valid = 1U;
+            s_backlog_retry_count = 0U;
+            has_msg = 1U;
+        }
+    }
+
+    if (has_msg != 0U)
+    {
+        if (UartDma_Transmit_NonBlocking(&g_uart1_dma, s_backlog_msg.payload, s_backlog_msg.len) == HAL_OK)
+        {
+            s_backlog_valid = 0U;
+            s_backlog_retry_count = 0U;
+        }
+        else
+        {
+            s_backlog_retry_count++;
+            if (s_backlog_retry_count >= UART_BACKLOG_RETRY_MAX)
+            {
+                s_backlog_valid = 0U;
+                s_backlog_retry_count = 0U;
+            }
+            else
+            {
+                osDelay(UART_BACKLOG_BACKOFF_MS);
+            }
+        }
+    }
+
+    osDelay(5);
   }
 }
 ```
@@ -53,8 +93,67 @@ void StartUartTask(void *argument)
 ```c
 static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
 {
-    (void)UartDma_Transmit_NonBlocking(&g_uart1_dma, data, len);
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+    UartQueue_PostBytes(MSG_TYPE_ECHO, data, len);
+
+    if (len > 0U)
+    {
+        char cmd_buf[64];
+        uint16_t copy_len = (len < (sizeof(cmd_buf) - 1U)) ? len : (uint16_t)(sizeof(cmd_buf) - 1U);
+        memcpy(cmd_buf, data, copy_len);
+        cmd_buf[copy_len] = '\0';
+
+        Output_Control_Status_t control_status = OUTPUT_CONTROL_OK;
+        uint8_t controls_safe = (Measure_IsReady() && (Output_Protection_GetState() == OUTPUT_PROTECTION_NORMAL)) ? 1U : 0U;
+        static const uint8_t rejected_msg[] = "\r\n[State] STATE:CONTROL_REJECTED\r\n";
+
+        char *p_val = strstr(cmd_buf, "SetDAC:");
+        if (p_val != NULL)
+        {
+            p_val += 7;
+            char *endptr;
+            float target_val = strtof(p_val, &endptr);
+            if (p_val != endptr)
+            {
+                if (controls_safe != 0U)
+                {
+                    control_status = Output_Control_SetCurrent(target_val);
+                    if (control_status != OUTPUT_CONTROL_OK)
+                    {
+                        UartQueue_PostBytes(MSG_TYPE_STATE, rejected_msg, (uint16_t)(sizeof(rejected_msg) - 1U));
+                    }
+                }
+                else
+                {
+                    UartQueue_PostBytes(MSG_TYPE_STATE, rejected_msg, (uint16_t)(sizeof(rejected_msg) - 1U));
+                }
+            }
+        }
+
+        char *p_of = strstr(cmd_buf, "SetOF:");
+        if (p_of != NULL)
+        {
+            p_of += 6;
+            if (*p_of == '1')
+            {
+                if (controls_safe != 0U)
+                {
+                    control_status = Output_Control_Enable();
+                    if (control_status != OUTPUT_CONTROL_OK)
+                    {
+                        UartQueue_PostBytes(MSG_TYPE_STATE, rejected_msg, (uint16_t)(sizeof(rejected_msg) - 1U));
+                    }
+                }
+                else
+                {
+                    UartQueue_PostBytes(MSG_TYPE_STATE, rejected_msg, (uint16_t)(sizeof(rejected_msg) - 1U));
+                }
+            }
+            else if (*p_of == '0')
+            {
+                Output_Control_Disable();
+            }
+        }
+    }
 }
 ```
 

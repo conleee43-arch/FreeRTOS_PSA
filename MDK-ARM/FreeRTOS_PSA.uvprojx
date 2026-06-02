@@ -469,6 +469,16 @@
               <FileType>1</FileType>
               <FilePath>../Core/Src/output_control.c</FilePath>
             </File>
+            <File>
+              <FileName>output_protection.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/output_protection.c</FilePath>
+            </File>
+            <File>
+              <FileName>calc_control.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/calc_control.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

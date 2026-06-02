@@ -28,19 +28,37 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include "uart_dma_driver.h"
 #include "adc_dma_driver.h"
 #include "dac_control.h"
 #include "output_control.h"
+#include "output_protection.h"
+#include "calc_control.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum {
+    MSG_TYPE_MEASURE,
+    MSG_TYPE_CALC,
+    MSG_TYPE_STATE,
+    MSG_TYPE_ECHO,
+    MSG_TYPE_BOOT
+} UartMsgType_t;
 
+typedef struct {
+    uint16_t len;
+    uint8_t payload[128];
+} UartMsg_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define UART_APP_MSG_MAX_LEN        128U
+#define CALC_CONTROL_RESET_FLAG     0x00000001U
+#define UART_BACKLOG_RETRY_MAX      20U
+#define UART_BACKLOG_BACKOFF_MS     20U
 
 /* USER CODE END PD */
 
@@ -51,14 +69,37 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-/* Definitions for uartTask */
+/* 任务句柄和属性定义 */
+osThreadId_t sampleFilterTaskHandle;
+const osThreadAttr_t sampleFilterTask_attributes = {
+  .name = "sampleFilterTask",
+  .priority = (osPriority_t) osPriorityNormal,
+  .stack_size = 512 * 4
+};
+
+osThreadId_t emergencyTaskHandle;
+const osThreadAttr_t emergencyTask_attributes = {
+  .name = "emergencyTask",
+  .priority = (osPriority_t) osPriorityRealtime,
+  .stack_size = 512 * 4
+};
+
+osThreadId_t calcControlTaskHandle;
+const osThreadAttr_t calcControlTask_attributes = {
+  .name = "calcControlTask",
+  .priority = (osPriority_t) osPriorityNormal,
+  .stack_size = 512 * 4
+};
+
 osThreadId_t uartTaskHandle;
 const osThreadAttr_t uartTask_attributes = {
   .name = "uartTask",
   .priority = (osPriority_t) osPriorityAboveNormal,
-  .stack_size = 256 * 4
- };
-void StartUartTask(void *argument);
+  .stack_size = 512 * 4
+};
+
+/* 串口消息队列句柄 */
+osMessageQueueId_t uartMsgQueueHandle;
 
 /* --- UART DMA 驱动实例与双缓冲区声明 --- */
 UartDma_Handler_t g_uart1_dma;
@@ -69,11 +110,16 @@ UartDma_Handler_t g_uart1_dma;
 static uint8_t g_usart1_rx_dma_buf[USART1_RX_DMA_BUF_SIZE];
 static uint8_t g_usart1_rx_main_buf[USART1_RX_MAIN_BUF_SIZE];
 
+void StartSampleFilterTask(void *argument);
+void StartEmergencyTask(void *argument);
+void StartCalcControlTask(void *argument);
+void StartUartTask(void *argument);
+static void UartQueue_PostBytes(UartMsgType_t type, const uint8_t *data, uint16_t len);
+
 /* 数据接收并回显解析回调 */
 static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
 {
-    /* 物理回显：非阻塞原路送回 */
-    (void)UartDma_Transmit_NonBlocking(&g_uart1_dma, data, len);
+    UartQueue_PostBytes(MSG_TYPE_ECHO, data, len);
 
     if (len > 0U)
     {
@@ -81,6 +127,10 @@ static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
         uint16_t copy_len = (len < (sizeof(cmd_buf) - 1U)) ? len : (uint16_t)(sizeof(cmd_buf) - 1U);
         memcpy(cmd_buf, data, copy_len);
         cmd_buf[copy_len] = '\0';
+
+        Output_Control_Status_t control_status = OUTPUT_CONTROL_OK;
+        uint8_t controls_safe = (Measure_IsReady() && (Output_Protection_GetState() == OUTPUT_PROTECTION_NORMAL)) ? 1U : 0U;
+        static const uint8_t rejected_msg[] = "\r\n[State] STATE:CONTROL_REJECTED\r\n";
 
         char *p_val = strstr(cmd_buf, "SetDAC:");
         if (p_val != NULL)
@@ -90,7 +140,18 @@ static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
             float target_val = strtof(p_val, &endptr);
             if (p_val != endptr)
             {
-                DAC_Control_UpdatePfcTargetCurrent(target_val);
+                if (controls_safe != 0U)
+                {
+                    control_status = Output_Control_SetCurrent(target_val);
+                    if (control_status != OUTPUT_CONTROL_OK)
+                    {
+                        UartQueue_PostBytes(MSG_TYPE_STATE, rejected_msg, (uint16_t)(sizeof(rejected_msg) - 1U));
+                    }
+                }
+                else
+                {
+                    UartQueue_PostBytes(MSG_TYPE_STATE, rejected_msg, (uint16_t)(sizeof(rejected_msg) - 1U));
+                }
             }
         }
 
@@ -100,7 +161,18 @@ static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
             p_of += 6;
             if (*p_of == '1')
             {
-                Output_Control_Enable();
+                if (controls_safe != 0U)
+                {
+                    control_status = Output_Control_Enable();
+                    if (control_status != OUTPUT_CONTROL_OK)
+                    {
+                        UartQueue_PostBytes(MSG_TYPE_STATE, rejected_msg, (uint16_t)(sizeof(rejected_msg) - 1U));
+                    }
+                }
+                else
+                {
+                    UartQueue_PostBytes(MSG_TYPE_STATE, rejected_msg, (uint16_t)(sizeof(rejected_msg) - 1U));
+                }
             }
             else if (*p_of == '0')
             {
@@ -110,20 +182,11 @@ static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
     }
 }
 /* USER CODE END Variables */
-/* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
-const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 128 * 4
-};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 
 /* USER CODE END FunctionPrototypes */
-
-void StartDefaultTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -134,93 +197,77 @@ void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
+  Output_Control_Init();
 
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
-  /* Mutex removed for debugging */
+
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
-  /* add semaphores, ... */
+
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
-  /* start timers, add new ones, ... */
+
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+  uartMsgQueueHandle = osMessageQueueNew(16, sizeof(UartMsg_t), NULL);
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+  sampleFilterTaskHandle = osThreadNew(StartSampleFilterTask, NULL, &sampleFilterTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
+  emergencyTaskHandle = osThreadNew(StartEmergencyTask, NULL, &emergencyTask_attributes);
+  calcControlTaskHandle = osThreadNew(StartCalcControlTask, NULL, &calcControlTask_attributes);
   uartTaskHandle = osThreadNew(StartUartTask, NULL, &uartTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
-  /* add events, ... */
+
   /* USER CODE END RTOS_EVENTS */
 
 }
 
-/* USER CODE BEGIN Header_StartDefaultTask */
+/* USER CODE BEGIN Header_StartSampleFilterTask */
 /**
-  * @brief  Function implementing the defaultTask thread.
+  * @brief  Function implementing the sampleFilterTask thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void *argument)
+/* USER CODE END Header_StartSampleFilterTask */
+void StartSampleFilterTask(void *argument)
 {
-  /* USER CODE BEGIN StartDefaultTask */
-  extern ADC_HandleTypeDef hadc1;  /* 声明 CubeMX 中生成的 ADC1 句柄 */
-  static char measure_buf[128];    /* 非阻塞 DMA 入队前仍需稳定的格式化源缓冲。 */
+  /* USER CODE BEGIN StartSampleFilterTask */
+  extern ADC_HandleTypeDef hadc1;
+
+  static char measure_buf[128];
   static char code_buf[96];
-  static uint32_t print_tick = 0;  /* 🟢 极重要：改为 static */
-  static uint32_t dac_tick = 0;
+  static uint32_t print_tick = 0;
 
   DAC_Control_Start(0U);
 
-  /* 1. 初始化 ADC DMA 采集驱动 (自动开启芯片硬件自校准和 DMA 循环传输) */
   HAL_StatusTypeDef init_res = Measure_Init(&hadc1);
   if (init_res != HAL_OK)
   {
-      char err_msg[128];
-      int err_len = snprintf(err_msg, sizeof(err_msg), 
-                             "\r\n[Fatal Error] Measure_Init Failed! Code: %d, ADC State: 0x%08X, DMA State: 0x%08X\r\n", 
-                             (int)init_res, (unsigned int)hadc1.State, (unsigned int)(hadc1.DMA_Handle ? hadc1.DMA_Handle->State : 0));
-      if (err_len > 0)
-      {
-          extern UART_HandleTypeDef huart1;
-          HAL_UART_Transmit(&huart1, (uint8_t*)err_msg, (uint16_t)err_len, HAL_MAX_DELAY);
-      }
-      Error_Handler(); /* 初始化或自校准异常，进入安全保护 */
+      Error_Handler();
   }
 
-  /* 任务无限循环 */
   for(;;)
   {
     uint32_t current_tick = osKernelGetTickCount();
 
-    /* 2. 高频状态机更新：计算 CNDTR 指针，无锁定位新 Slot 组，触发自适应滑动滤波 and 出厂参数自校准 */
+    /* 高频采样与滑动平均滤波 */
     Measure_Update();
 
-    if ((current_tick - dac_tick) >= 100U)
-    {
-        dac_tick = current_tick;
-        Output_Control_SetCurrent(DAC_Control_GetPfcTargetCurrent());
-    }
-
-    /* 3. 每隔 1000 毫秒，格式化输出校准滤波后的遥测数据包 */
+    /* 每隔 1000ms 将数据投递到串口队列中发送 */
     if ((current_tick - print_tick) >= 1000U)
     {
         if (Measure_IsReady())
         {
-            /* 第一帧保持 GUI 行协议，第二帧保留 6 通道滤波 ADC code 供串口调试。 */
             int measure_len = snprintf(measure_buf, sizeof(measure_buf),
                                        "\r\n[Measure] V1:%0.2fV V2:%0.2fV CO:%0.2fA VO:%0.2fV T:%0.1fC Vref:%0.3fV\r\n",
                                        Measure_GetV1In(),
@@ -232,24 +279,21 @@ void StartDefaultTask(void *argument)
 
             if ((measure_len > 0) && ((size_t)measure_len < sizeof(measure_buf)))
             {
-                /* GUI 主协议帧优先；ADC code 诊断帧按最佳努力发送。 */
-                if (UartDma_Transmit_NonBlocking(&g_uart1_dma, (const uint8_t*)measure_buf, (uint16_t)measure_len) == HAL_OK)
+                UartQueue_PostBytes(MSG_TYPE_MEASURE, (const uint8_t*)measure_buf, (uint16_t)measure_len);
+                print_tick = current_tick;
+
+                int code_len = snprintf(code_buf, sizeof(code_buf),
+                                        "[Code] 0:%u,1:%u,2:%u,3:%u,4:%u,5:%u\r\n",
+                                        (unsigned int)Measure_GetRawCode(0),
+                                        (unsigned int)Measure_GetRawCode(1),
+                                        (unsigned int)Measure_GetRawCode(2),
+                                        (unsigned int)Measure_GetRawCode(3),
+                                        (unsigned int)Measure_GetRawCode(4),
+                                        (unsigned int)Measure_GetRawCode(5));
+
+                if ((code_len > 0) && ((size_t)code_len < sizeof(code_buf)))
                 {
-                    print_tick = current_tick;
-
-                    int code_len = snprintf(code_buf, sizeof(code_buf),
-                                            "[Code] 0:%u,1:%u,2:%u,3:%u,4:%u,5:%u\r\n",
-                                            (unsigned int)Measure_GetRawCode(0),
-                                            (unsigned int)Measure_GetRawCode(1),
-                                            (unsigned int)Measure_GetRawCode(2),
-                                            (unsigned int)Measure_GetRawCode(3),
-                                            (unsigned int)Measure_GetRawCode(4),
-                                            (unsigned int)Measure_GetRawCode(5));
-
-                    if ((code_len > 0) && ((size_t)code_len < sizeof(code_buf)))
-                    {
-                        (void)UartDma_Transmit_NonBlocking(&g_uart1_dma, (const uint8_t*)code_buf, (uint16_t)code_len);
-                    }
+                    UartQueue_PostBytes(MSG_TYPE_MEASURE, (const uint8_t*)code_buf, (uint16_t)code_len);
                 }
             }
             else
@@ -263,47 +307,272 @@ void StartDefaultTask(void *argument)
         }
     }
 
-    /* 4. 每毫秒更新，保障滤波算法的高吞吐率并释放 CPU 资源 */
     osDelay(1);
   }
-  /* USER CODE END StartDefaultTask */
+  /* USER CODE END StartSampleFilterTask */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+void StartEmergencyTask(void *argument)
+{
+    Output_Protection_Input_t prot_in;
+    Output_Protection_Output_t prot_out;
+    Output_Protection_State_t last_state = OUTPUT_PROTECTION_NORMAL;
+
+    Output_Protection_Init();
+
+    for (;;)
+    {
+        uint32_t tick = osKernelGetTickCount();
+
+        if (!Measure_IsReady())
+        {
+            Output_Control_Disable();
+            osDelay(2);
+            continue;
+        }
+
+        prot_in.temperature_c = Measure_GetTemp();
+        prot_in.vo_out_v = Measure_GetVoOut();
+        prot_in.co_out_a = Measure_GetCoOut();
+        prot_in.tick_ms = tick;
+
+        Output_Protection_Update(&prot_in, &prot_out);
+
+        if (prot_out.disable_output)
+        {
+            Output_Control_Disable();
+        }
+        else if (prot_out.enable_output)
+        {
+            (void)Output_Control_Enable();
+        }
+
+        if (prot_out.reset_calc_control)
+        {
+            if (calcControlTaskHandle != NULL)
+            {
+                (void)osThreadFlagsSet(calcControlTaskHandle, CALC_CONTROL_RESET_FLAG);
+            }
+        }
+
+        Output_Protection_State_t current_state = Output_Protection_GetState();
+        if (current_state != last_state)
+        {
+            last_state = current_state;
+
+            const char* state_str = "UNKNOWN";
+            if (current_state == OUTPUT_PROTECTION_NORMAL) state_str = "NORMAL";
+            else if (current_state == OUTPUT_PROTECTION_TRIPPED) state_str = "TRIPPED";
+            else if (current_state == OUTPUT_PROTECTION_RECOVERY_WAIT) state_str = "RECOVERY_WAIT";
+
+            UartMsg_t state_msg;
+            int state_len = snprintf((char*)state_msg.payload, sizeof(state_msg.payload), "\r\n[State] STATE:%s\r\n", state_str);
+            if ((state_len > 0) && ((size_t)state_len < sizeof(state_msg.payload)))
+            {
+                state_msg.len = (uint16_t)state_len;
+                UartQueue_PostBytes(MSG_TYPE_STATE, state_msg.payload, state_msg.len);
+            }
+        }
+
+        osDelay(2);
+    }
+}
+
+void StartCalcControlTask(void *argument)
+{
+    Calc_Control_Input_t calc_in;
+    Calc_Control_Output_t calc_out;
+    Calc_Control_State_t last_state = CALC_CONTROL_WAIT_SAFE;
+
+    Calc_Control_Init();
+
+    for (;;)
+    {
+        if (!Measure_IsReady())
+        {
+            osDelay(10);
+            continue;
+        }
+
+        uint32_t reset_flags = osThreadFlagsClear(CALC_CONTROL_RESET_FLAG);
+        uint8_t reset_request = 0U;
+        if ((reset_flags & osFlagsError) != 0U)
+        {
+            reset_request = 1U;
+        }
+        else if ((reset_flags & CALC_CONTROL_RESET_FLAG) != 0U)
+        {
+            reset_request = 1U;
+        }
+
+        calc_in.vo_out_v = Measure_GetVoOut();
+        calc_in.co_out_a = Measure_GetCoOut();
+        calc_in.tick_ms = osKernelGetTickCount();
+        calc_in.safe_allowed = (Output_Protection_GetState() == OUTPUT_PROTECTION_NORMAL);
+        calc_in.reset_request = reset_request;
+
+        Calc_Control_Update(&calc_in, &calc_out);
+
+        if (calc_out.change_current)
+        {
+            Output_Control_Status_t control_status = Output_Control_SetCurrent(calc_out.set_current_a);
+            if (control_status != OUTPUT_CONTROL_OK)
+            {
+                (void)osThreadFlagsSet(calcControlTaskHandle, CALC_CONTROL_RESET_FLAG);
+            }
+        }
+
+        if (calc_out.publish_calc_report)
+        {
+            UartMsg_t report_msg;
+            int report_len = snprintf((char*)report_msg.payload, sizeof(report_msg.payload),
+                                      "\r\n[Calc] R:%0.3fR U1:%0.2fV I1:%0.2fA U2:%0.2fV I2:%0.2fA IOC:12.00A\r\n",
+                                      calc_out.calculated_resistance,
+                                      calc_out.u1, calc_out.i1,
+                                      calc_out.u2, calc_out.i2);
+            if ((report_len > 0) && ((size_t)report_len < sizeof(report_msg.payload)))
+            {
+                report_msg.len = (uint16_t)report_len;
+                UartQueue_PostBytes(MSG_TYPE_CALC, report_msg.payload, report_msg.len);
+            }
+        }
+
+        Calc_Control_State_t current_state = Calc_Control_GetState();
+        if (current_state != last_state)
+        {
+            last_state = current_state;
+
+            const char* state_str = "WAIT_SAFE";
+            switch (current_state)
+            {
+                case CALC_CONTROL_WAIT_SAFE: state_str = "WAIT_SAFE"; break;
+                case CALC_CONTROL_SET_3A: state_str = "SET_3A"; break;
+                case CALC_CONTROL_WAIT_3A_STABLE: state_str = "WAIT_3A_STABLE"; break;
+                case CALC_CONTROL_LATCH_3A: state_str = "LATCH_3A"; break;
+                case CALC_CONTROL_SET_2A: state_str = "SET_2A"; break;
+                case CALC_CONTROL_WAIT_2A_STABLE: state_str = "WAIT_2A_STABLE"; break;
+                case CALC_CONTROL_LATCH_2A: state_str = "LATCH_2A"; break;
+                case CALC_CONTROL_CALC_RESISTANCE: state_str = "CALC_RESISTANCE"; break;
+                case CALC_CONTROL_MONITOR: state_str = "MONITOR"; break;
+            }
+
+            UartMsg_t state_msg;
+            int state_len = snprintf((char*)state_msg.payload, sizeof(state_msg.payload), "\r\n[State] STATE:%s\r\n", state_str);
+            if ((state_len > 0) && ((size_t)state_len < sizeof(state_msg.payload)))
+            {
+                state_msg.len = (uint16_t)state_len;
+                UartQueue_PostBytes(MSG_TYPE_STATE, state_msg.payload, state_msg.len);
+            }
+        }
+
+        osDelay(10);
+    }
+}
+
 void StartUartTask(void *argument)
 {
-  /* USER CODE BEGIN StartUartTask */
   extern UART_HandleTypeDef huart1;
-  
-  /* 初始化驱动实例，接管 USART1 的 DMA 通信 */
-  if (UartDma_Init(&g_uart1_dma, 
-                   &huart1, 
-                   g_usart1_rx_dma_buf, 
-                   USART1_RX_DMA_BUF_SIZE, 
-                   g_usart1_rx_main_buf, 
+
+  static UartMsg_t s_backlog_msg;
+  static uint8_t s_backlog_valid = 0U;
+  static uint8_t s_backlog_retry_count = 0U;
+
+  if (UartDma_Init(&g_uart1_dma,
+                   &huart1,
+                   g_usart1_rx_dma_buf,
+                   USART1_RX_DMA_BUF_SIZE,
+                   g_usart1_rx_main_buf,
                    USART1_RX_MAIN_BUF_SIZE) != HAL_OK)
   {
       Error_Handler();
   }
 
   char task2_msg[] = "\r\n[Task 2] UART DMA NonBlocking Running!\r\n";
+  UartQueue_PostBytes(MSG_TYPE_BOOT, (const uint8_t*)task2_msg, (uint16_t)(sizeof(task2_msg) - 1U));
+
   for(;;)
   {
-    /* 以非阻塞方式发送任务状态数据 */
-    (void)UartDma_Transmit_NonBlocking(&g_uart1_dma, (const uint8_t*)task2_msg, (uint16_t)(sizeof(task2_msg) - 1U));
-    
-    /* 
-     * 极其优秀的 RTOS 轮询设计：
-     * 每 2 秒的主循环中，通过内循环以 200Hz 的频率 (每 5ms) 快速轮询 Poll 接收自愈与派发，
-     * 既保证了接收的亚毫秒级实时性，又通过 osDelay(5) 释放 CPU，确保多任务流畅并发。
-     */
-    for (uint16_t i = 0U; i < 400U; i++)
+    UartDma_Poll(&g_uart1_dma, Usart1_RxParser_Callback);
+
+    uint8_t has_msg = 0U;
+
+    if (s_backlog_valid != 0U)
     {
-        UartDma_Poll(&g_uart1_dma, Usart1_RxParser_Callback);
-        osDelay(5);
+        has_msg = 1U;
     }
+    else
+    {
+        if (osMessageQueueGet(uartMsgQueueHandle, &s_backlog_msg, NULL, 0U) == osOK)
+        {
+            s_backlog_valid = 1U;
+            s_backlog_retry_count = 0U;
+            has_msg = 1U;
+        }
+    }
+
+    if (has_msg != 0U)
+    {
+        if (UartDma_Transmit_NonBlocking(&g_uart1_dma, s_backlog_msg.payload, s_backlog_msg.len) == HAL_OK)
+        {
+            s_backlog_valid = 0U;
+            s_backlog_retry_count = 0U;
+        }
+        else
+        {
+            s_backlog_retry_count++;
+            if (s_backlog_retry_count >= UART_BACKLOG_RETRY_MAX)
+            {
+                s_backlog_valid = 0U;
+                s_backlog_retry_count = 0U;
+            }
+            else
+            {
+                osDelay(UART_BACKLOG_BACKOFF_MS);
+            }
+        }
+    }
+
+    osDelay(5);
   }
-  /* USER CODE END StartUartTask */
+}
+
+static void UartQueue_PostBytes(UartMsgType_t type, const uint8_t *data, uint16_t len)
+{
+    if ((uartMsgQueueHandle == NULL) || (data == NULL) || (len == 0U))
+    {
+        return;
+    }
+
+    UartMsg_t msg;
+    msg.len = (len > UART_APP_MSG_MAX_LEN) ? UART_APP_MSG_MAX_LEN : len;
+    memcpy(msg.payload, data, msg.len);
+
+    osStatus_t put_status = osMessageQueuePut(uartMsgQueueHandle, &msg, 0U, 0U);
+    if (put_status != osOK)
+    {
+        if (type == MSG_TYPE_STATE)
+        {
+            UartMsg_t dropped_msg;
+            if (osMessageQueueGet(uartMsgQueueHandle, &dropped_msg, NULL, 0U) == osOK)
+            {
+                (void)osMessageQueuePut(uartMsgQueueHandle, &msg, 0U, 0U);
+            }
+        }
+    }
+}
+
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    (void)xTask;
+    (void)pcTaskName;
+
+    portDISABLE_INTERRUPTS();
+    OF_EN_GPIO_Port->BRR = (uint32_t)OF_EN_Pin;
+    DAC1->DHR12R1 = 0U;
+    for (;;)
+    {
+    }
 }
 /* USER CODE END Application */

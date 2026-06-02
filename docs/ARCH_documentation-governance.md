@@ -12,6 +12,7 @@
 |---|---|---|---|
 | `AGENTS.md` | 会话快捷入口、项目高层元数据、关键开发指令、核心 Guardrails。 | 详细的硬件配置、复杂的通信协议、具体算法实现细节。 | **任何会话开启时默认装载** |
 | [ARCH_documentation-governance.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/ARCH_documentation-governance.md) | 文档系统的真理注册表、装载路由映射、文档治理与生命周期标准。 | 具体软硬件实现标准、算法公式。 | 进行文档审计或执行 `doc sweep` 时 |
+| [FreeRTOS_Tasks_Topology.html](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/FreeRTOS_Tasks_Topology.html) | FreeRTOS 4大任务拓扑关系交互看板，包含硬件交互、IPC通信以及实时仿真模拟沙盘。 | 具体软硬件实现标准代码。 | 查看固件架构、任务协同与生命周期分析时 |
 | [GUIDE_developer.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/GUIDE_developer.md) | 工业级 C/Python 开发规范、TDD 决策树、零损失重构协议、RTOS 异步开发原则。 | 芯片级硬件寄存器说明、业务逻辑与具体的通信协议报文。 | 涉及任何代码层面的修改与技术重构时 |
 | [ARCH_technical-specs.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/ARCH_technical-specs.md) | 170MHz 时钟树、VREFBUF 电压配置、ADC/USART 底层 DMA 映射及 Table-Driven 解算属性表。 | 数据帧编解码格式、具体的高阶滤波算法代码与应用层业务。 | 涉及引脚调整、时钟变更、通道配置或物理增益修改时 |
 | [STANDARDS_interface.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/STANDARDS_interface.md) | 串口 Measure 文本行协议、GUI `MEASURE_PATTERN` 匹配正则、`SetDAC` 指令、测试校验脚本逻辑。 | 底层 DMA 中断自愈的具体寄存器操作、中值排序滤波的内部数学算法。 | 修改通信协议、新增交互命令、或修改 GUI 接收匹配规则时 |

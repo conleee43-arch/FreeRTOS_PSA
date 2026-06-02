@@ -3,10 +3,15 @@
 
 #include "main.h"
 
+typedef enum {
+    OUTPUT_CONTROL_OK = 0,
+    OUTPUT_CONTROL_REJECTED = 1
+} Output_Control_Status_t;
+
 void Output_Control_Init(void);
-void Output_Control_Enable(void);
+Output_Control_Status_t Output_Control_Enable(void);
 void Output_Control_Disable(void);
-void Output_Control_SetCurrent(float current_A);
+Output_Control_Status_t Output_Control_SetCurrent(float current_A);
 void Output_Control_ClearFaultOutput(void);
 
 #endif

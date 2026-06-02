@@ -33,6 +33,18 @@ MEASURE_PATTERN = re.compile(
     r"\[Measure\]\s+V1:([\d\.-]+)V\s+V2:([\d\.-]+)V\s+CO:([\d\.-]+)A\s+VO:([\d\.-]+)V\s+T:([\d\.-]+)C\s+Vref:([\d\.-]+)V"
 )
 
+# 正则表达式：解析内阻计算报告
+# 格式: [Calc] R:2.000R U1:400.00V I1:3.00A U2:398.00V I2:2.00A IOC:12.00A
+CALC_PATTERN = re.compile(
+    r"\[Calc\]\s+R:([\d\.-]+)R\s+U1:([\d\.-]+)V\s+I1:([\d\.-]+)A\s+U2:([\d\.-]+)V\s+I2:([\d\.-]+)A\s+IOC:([\d\.-]+)A"
+)
+
+# 正则表达式：解析保护/内阻状态机状态转移帧
+# 格式: [State] STATE:NORMAL
+STATE_PATTERN = re.compile(
+    r"\[State\]\s+STATE:([A-Za-z0-9_]+)"
+)
+
 # QSS 高保真扁平化深色视觉主题
 MODERN_STYLE = """
 QMainWindow {
@@ -188,7 +200,7 @@ class RealTimeTrendPlot(QWidget):
         self.max_points = 100
         self.current_data = [0.0] * self.max_points
         self.voltage_data = [0.0] * self.max_points
-        
+
         self.setMinimumHeight(180)
 
     def append_data(self, current: float, voltage: float):
@@ -239,7 +251,7 @@ class RealTimeTrendPlot(QWidget):
         data_max_i = max(self.current_data)
         if data_max_i > max_i:
             max_i = data_max_i * 1.2
-            
+
         data_max_v = max(self.voltage_data)
         if data_max_v > max_v:
             max_v = data_max_v * 1.2
@@ -348,14 +360,14 @@ class SerialReaderThread(QThread):
                         data = self.ser.read(self.ser.in_waiting)
                         if data:
                             self.raw_data_received.emit(data)
-                            
+
                             # 按照行协议进行解包（\n 结尾分割）
                             self.line_buffer.extend(data)
                             while b'\n' in self.line_buffer:
                                 idx = self.line_buffer.index(b'\n')
                                 raw_line = self.line_buffer[:idx+1]
                                 self.line_buffer = self.line_buffer[idx+1:]
-                                
+
                                 # 解码单行数据
                                 try:
                                     line_str = raw_line.decode('utf-8', errors='replace').strip()
@@ -381,7 +393,7 @@ class PSAFirmwareConsole(QMainWindow):
         super().__init__()
         self.ser = None
         self.reader_thread = None
-        self.last_dac_current = 4.00  # 固件开机默认以 4.00A 运行 (DAC_PFC_CURRENT_4A)
+        self.last_dac_current = 0.00  # 固件开机默认安全关断输出
 
         self.init_ui()
         self.setup_connections()
@@ -394,16 +406,16 @@ class PSAFirmwareConsole(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("PSA 嵌入式固件智能控制看板")
-        self.resize(1100, 750)
+        self.resize(900, 650)
         self.setStyleSheet(MODERN_STYLE)
 
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
 
-        # 顶层整体水平布局：左侧控制区，右侧数据图表看板
-        top_layout = QHBoxLayout(central_widget)
-        top_layout.setContentsMargins(15, 15, 15, 15)
-        top_layout.setSpacing(15)
+        # 顶层整体垂直布局
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(15)
 
         # ==================== 左侧控制侧边栏 ====================
         left_panel = QVBoxLayout()
@@ -411,29 +423,31 @@ class PSAFirmwareConsole(QMainWindow):
 
         # 1. 串口配置卡片
         port_group = QGroupBox("串口通信连接", central_widget)
-        port_layout = QGridLayout(port_group)
-        port_layout.setContentsMargins(15, 20, 15, 15)
-        port_layout.setSpacing(10)
+        port_layout = QHBoxLayout(port_group)
+        port_layout.setContentsMargins(15, 12, 15, 12)
+        port_layout.setSpacing(12)
 
-        port_layout.addWidget(QLabel("串口端口:", port_group), 0, 0)
+        port_layout.addWidget(QLabel("串口端口:", port_group))
         self.port_combo = QComboBox(port_group)
-        port_layout.addWidget(self.port_combo, 0, 1)
+        self.port_combo.setMinimumWidth(150)
+        port_layout.addWidget(self.port_combo)
 
-        port_layout.addWidget(QLabel("波特率:", port_group), 1, 0)
+        port_layout.addWidget(QLabel("波特率:", port_group))
         self.baud_combo = QComboBox(port_group)
         self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"])
         self.baud_combo.setCurrentText("115200")
-        port_layout.addWidget(self.baud_combo, 1, 1)
+        self.baud_combo.setMinimumWidth(100)
+        port_layout.addWidget(self.baud_combo)
 
         self.connect_btn = QPushButton("开启控制台", port_group)
-        port_layout.addWidget(self.connect_btn, 2, 0, 1, 2)
+        port_layout.addWidget(self.connect_btn)
 
         self.disconnect_btn = QPushButton("关闭控制台", port_group)
         self.disconnect_btn.setObjectName("disconnectBtn")
         self.disconnect_btn.setEnabled(False)
-        port_layout.addWidget(self.disconnect_btn, 3, 0, 1, 2)
+        port_layout.addWidget(self.disconnect_btn)
 
-        left_panel.addWidget(port_group)
+        port_layout.addStretch(1)
 
         # 2. DAC 设定与闭环监控卡片 (核心改进)
         dac_group = QGroupBox("DAC 目标电流设定 (PA4)", central_widget)
@@ -447,18 +461,18 @@ class PSAFirmwareConsole(QMainWindow):
         self.dac_spin = QDoubleSpinBox(dac_group)
         self.dac_spin.setRange(0.00, 10.00)
         self.dac_spin.setSingleStep(0.1)
-        self.dac_spin.setValue(4.00)
+        self.dac_spin.setValue(0.00)
         spin_layout.addWidget(self.dac_spin)
         dac_layout.addLayout(spin_layout)
 
         # 滑动条设置
         self.dac_slider = QSlider(Qt.Horizontal, dac_group)
         self.dac_slider.setRange(0, 1000)  # 0.00A 到 10.00A，乘 100 映射
-        self.dac_slider.setValue(400)
+        self.dac_slider.setValue(0)
         dac_layout.addWidget(self.dac_slider)
 
         # DAC 寄存器数字值提示
-        self.lbl_dac_code = QLabel("理论 DAC 数字量: 1638  (1.00 V)", dac_group)
+        self.lbl_dac_code = QLabel("理论 DAC 数字量: 0  (0.000 V)", dac_group)
         self.lbl_dac_code.setStyleSheet("color: #a7f3d0; font-family: Consolas;")
         dac_layout.addWidget(self.lbl_dac_code)
 
@@ -467,9 +481,9 @@ class PSAFirmwareConsole(QMainWindow):
         comp_frame.setStyleSheet("background-color: #09090e; border: 1px solid #1e1e2f; border-radius: 6px;")
         comp_layout = QGridLayout(comp_frame)
         comp_layout.setContentsMargins(8, 8, 8, 8)
-        
+
         comp_layout.addWidget(QLabel("给出的 DAC 设定:", comp_frame), 0, 0)
-        self.lbl_dac_set = QLabel("4.00 A", comp_frame)
+        self.lbl_dac_set = QLabel("0.00 A", comp_frame)
         self.lbl_dac_set.setStyleSheet("color: #6366f1; font-weight: bold; font-family: Consolas;")
         comp_layout.addWidget(self.lbl_dac_set, 0, 1)
 
@@ -505,13 +519,16 @@ class PSAFirmwareConsole(QMainWindow):
         dac_layout.addLayout(of_en_layout)
 
         # 固件接口提示
-        lbl_tip = QLabel("提示：固件内部默认 50ms 持续输出 4A。您可以通过 GUI 发送 'SetDAC:x.xx' 控制指令进行动态设定。", dac_group)
+        lbl_tip = QLabel("提示：固件默认安全关断输出。采样就绪且保护状态正常时，可通过 GUI 发送 'SetDAC:x.xx' 控制指令动态设定。", dac_group)
         lbl_tip.setWordWrap(True)
         lbl_tip.setStyleSheet("font-size: 11px; color: #64748b;")
         dac_layout.addWidget(lbl_tip)
 
-        left_panel.addWidget(dac_group)
-        left_panel.addStretch(1)
+        # left_panel.addWidget(dac_group)
+
+        # left_panel.addWidget(diag_group)
+
+        # left_panel.addStretch(1)
 
         # ==================== 右侧数据看板交互区 ====================
         right_panel = QVBoxLayout()
@@ -587,7 +604,7 @@ class PSAFirmwareConsole(QMainWindow):
         trend_layout.setContentsMargins(10, 20, 10, 10)
         self.trend_plot = RealTimeTrendPlot(trend_group)
         trend_layout.addWidget(self.trend_plot)
-        right_panel.addWidget(trend_group)
+        # right_panel.addWidget(trend_group)
 
         # 3. 原始数据与调试日志 (可折叠的控制终端)
         terminal_group = QGroupBox("底层串口通信终端监视器", central_widget)
@@ -599,7 +616,7 @@ class PSAFirmwareConsole(QMainWindow):
         self.txt_receive.setMaximumHeight(100)  # 底层日志限制高度，将空间留给仪表盘
         term_layout.addWidget(self.txt_receive)
 
-        # 控制指令发码区
+        # 控制指令发码区 (不加入布局显示)
         send_row = QHBoxLayout()
         self.txt_send = QLineEdit(terminal_group)
         self.txt_send.setPlaceholderText("在此处输入手动控制指令（如 Start / Stop / ReSet System）...")
@@ -607,7 +624,7 @@ class PSAFirmwareConsole(QMainWindow):
         self.send_btn.setEnabled(False)
         send_row.addWidget(self.txt_send, stretch=4)
         send_row.addWidget(self.send_btn, stretch=1)
-        term_layout.addLayout(send_row)
+        # term_layout.addLayout(send_row)
 
         chk_row = QHBoxLayout()
         self.chk_hex_show = QCheckBox("十六进制 (Hex Show)", terminal_group)
@@ -625,8 +642,10 @@ class PSAFirmwareConsole(QMainWindow):
         right_panel.addWidget(terminal_group)
 
         # 主界面集成布局
-        top_layout.addLayout(left_panel, stretch=1)
-        top_layout.addLayout(right_panel, stretch=3)
+        main_layout.addWidget(port_group)
+        main_layout.addWidget(adc_group)
+        main_layout.addStretch(1)
+        main_layout.addWidget(terminal_group)
 
         # 状态栏
         self.status_bar = QStatusBar(self)
@@ -663,7 +682,7 @@ class PSAFirmwareConsole(QMainWindow):
             self.port_combo.clear()
             for p in ports:
                 self.port_combo.addItem(f"{p.device} ({p.description})", p.device)
-            
+
             if ports:
                 self.status_bar.showMessage(f"扫描完成，发现 {len(ports)} 个可用端口。")
             else:
@@ -691,10 +710,10 @@ class PSAFirmwareConsole(QMainWindow):
         dac_code = int((current * 409.5) + 0.5)
         if dac_code > 4095:
             dac_code = 4095
-        
+
         # 理论电压 (DAC参考 2.5V): V_out = (DAC_Code / 4095) * 2.5V
         v_out = (dac_code / 4095.0) * 2.5
-        
+
         self.lbl_dac_code.setText(f"理论 DAC 数字量: {dac_code}  ({v_out:.3f} V)")
         self.lbl_dac_set.setText(f"{current:.2f} A")
 
@@ -751,7 +770,7 @@ class PSAFirmwareConsole(QMainWindow):
         self.port_combo.setEnabled(not connected)
         self.baud_combo.setEnabled(not connected)
         self.connect_btn.setEnabled(not connected)
-        
+
         self.disconnect_btn.setEnabled(connected)
         self.send_btn.setEnabled(connected)
         self.send_dac_btn.setEnabled(connected)
@@ -796,6 +815,44 @@ class PSAFirmwareConsole(QMainWindow):
             except ValueError:
                 pass
 
+        # 匹配内阻计算报告
+        calc_match = CALC_PATTERN.search(line)
+        if calc_match:
+            try:
+                r_val = float(calc_match.group(1))
+                u1_val = float(calc_match.group(2))
+                i1_val = float(calc_match.group(3))
+                u2_val = float(calc_match.group(4))
+                i2_val = float(calc_match.group(5))
+                ioc_val = float(calc_match.group(6))
+
+                self.lbl_dcr_val.setText(f"{r_val:.3f} Ω")
+                self.lbl_latch1.setText(f"{u1_val:.2f}V / {i1_val:.2f}A")
+                self.lbl_latch2.setText(f"{u2_val:.2f}V / {i2_val:.2f}A")
+                self.lbl_latch_ioc.setText(f"{ioc_val:.2f} A")
+            except Exception:
+                pass
+
+        # 匹配保护/状态机状态转移
+        state_match = STATE_PATTERN.search(line)
+        if state_match:
+            try:
+                st_str = state_match.group(1)
+                if st_str == "NORMAL":
+                    self.lbl_protect_state.setText("🟢 正常运行 (NORMAL)")
+                    self.lbl_protect_state.setStyleSheet("color: #10b981; font-weight: bold; font-size: 13px;")
+                elif st_str == "TRIPPED":
+                    self.lbl_protect_state.setText("🔴 越限跳闸 (TRIPPED)")
+                    self.lbl_protect_state.setStyleSheet("color: #ef4444; font-weight: bold; font-size: 13px;")
+                elif st_str == "RECOVERY_WAIT":
+                    self.lbl_protect_state.setText("🟡 恢复等待 (RECOVERY_WAIT)")
+                    self.lbl_protect_state.setStyleSheet("color: #f59e0b; font-weight: bold; font-size: 13px;")
+                else:
+                    self.lbl_protect_state.setText(f"🔵 计算状态 ({st_str})")
+                    self.lbl_protect_state.setStyleSheet("color: #38bdf8; font-weight: bold; font-size: 13px;")
+            except Exception:
+                pass
+
     @Slot(bytes)
     def handle_raw_data(self, data: bytes):
         """如果勾选十六进制显示，在此将原始报文打印至终端"""
@@ -817,7 +874,7 @@ class PSAFirmwareConsole(QMainWindow):
 
         current_val = self.dac_spin.value()
         cmd = f"SetDAC:{current_val:.2f}\r\n"
-        
+
         try:
             self.ser.write(cmd.encode('utf-8'))
             self.status_bar.showMessage(f"已下发电流控制设定: {cmd.strip()}")
