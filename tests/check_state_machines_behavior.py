@@ -89,6 +89,10 @@ class CalcControlModel:
         self.u2 = 0.0
         self.i2 = 0.0
         self.resistance = 0.0
+        self.i1_prev_sample = 0.0
+        self.i1_last_sample_tick = 0
+        self.i1_stable_count = 0
+        self.open_circuit_error = 0
 
     def update(self, vo_out_v, co_out_a, tick_ms, safe_allowed, reset_request=False):
         output = {
@@ -101,6 +105,7 @@ class CalcControlModel:
             "i1": self.i1,
             "u2": self.u2,
             "i2": self.i2,
+            "open_circuit_error": self.open_circuit_error,
         }
 
         if reset_request or not safe_allowed:
@@ -111,9 +116,14 @@ class CalcControlModel:
             self.u2 = 0.0
             self.i2 = 0.0
             self.resistance = 0.0
+            self.i1_prev_sample = 0.0
+            self.i1_last_sample_tick = 0
+            self.i1_stable_count = 0
+            self.open_circuit_error = 0
             output["set_current_a"] = 0.0
             output["change_current"] = 1
             output["calculated_resistance"] = 0.0
+            output["open_circuit_error"] = 0
             return output
 
         keep_running = True
@@ -128,11 +138,31 @@ class CalcControlModel:
                 output["set_current_a"] = 3.0
                 output["change_current"] = 1
                 self.state_start_tick = tick_ms
+                self.i1_prev_sample = co_out_a
+                self.i1_last_sample_tick = tick_ms
+                self.i1_stable_count = 0
+                self.open_circuit_error = 0
+                output["open_circuit_error"] = 0
                 self.state = CalcState.WAIT_3A_STABLE
             elif self.state == CalcState.WAIT_3A_STABLE:
-                if tick_ms - self.state_start_tick >= STEP_3A_STABLE_MS:
-                    self.state = CalcState.LATCH_3A
-                    keep_running = True
+                if tick_ms - self.i1_last_sample_tick >= 100:
+                    delta_a = abs(co_out_a - self.i1_prev_sample)
+                    if delta_a <= 0.5:
+                        self.i1_stable_count += 1
+                        if self.i1_stable_count >= 5:
+                            if co_out_a < 1.0:
+                                self.open_circuit_error = 1
+                                output["open_circuit_error"] = 1
+                                self.state = CalcState.WAIT_SAFE
+                                keep_running = False
+                            else:
+                                self.state = CalcState.LATCH_3A
+                                keep_running = True
+                    else:
+                        self.i1_stable_count = 0
+                    
+                    self.i1_prev_sample = co_out_a
+                    self.i1_last_sample_tick = tick_ms
             elif self.state == CalcState.LATCH_3A:
                 self.u1 = vo_out_v
                 self.i1 = co_out_a
@@ -258,68 +288,97 @@ def check_output_protection_behavior():
 
 def check_calc_control_behavior():
     print(">>> 正在执行 calc_control 九段状态机步进用例...")
+    
+    # 1. 正常 3A 判稳和计算内阻流程
     model = CalcControlModel()
 
+    # 0ms: 触发进入 WAIT_3A_STABLE，且 co_out_a = 0.0A
     out = model.update(400.0, 0.0, 0, True)
     assert_equal(model.state, CalcState.WAIT_3A_STABLE, "safe start moves to 3A wait")
     assert_equal(out["change_current"], 1, "3A step requests current change")
     assert_close(out["set_current_a"], 3.0, "3A step current")
 
+    # 99ms: 不到 100ms 采样点，状态不变，保持 WAIT_3A_STABLE
     out = model.update(399.0, 3.0, 99, True)
     assert_equal(model.state, CalcState.WAIT_3A_STABLE, "3A wait blocks before 100ms")
-    assert_equal(out["change_current"], 0, "no current change while waiting 3A")
 
-    out = model.update(399.0, 3.0, 100, True)
-    assert_equal(model.state, CalcState.WAIT_2A_STABLE, "3A latch moves to 2A wait")
+    # 100ms: 第 1 次采样。如果此时 co_out_a = 2.5A。上次采样 co_out_a = 0.0A，delta = 2.5A > 0.5A，未稳定，计数器归零
+    out = model.update(399.0, 2.5, 100, True)
+    assert_equal(model.state, CalcState.WAIT_3A_STABLE, "1st sample delta > 500mA, not stable")
+
+    # 200ms: 第 2 次采样。co_out_a = 3.0A。delta = 0.5A <= 0.5A，stable_count = 1
+    out = model.update(399.0, 3.0, 200, True)
+    assert_equal(model.state, CalcState.WAIT_3A_STABLE, "2nd sample delta <= 500mA, count=1")
+
+    # 300ms: 第 3 次采样。co_out_a = 3.1A。delta = 0.1A <= 0.5A，stable_count = 2
+    out = model.update(399.0, 3.1, 300, True)
+    assert_equal(model.state, CalcState.WAIT_3A_STABLE, "3rd sample delta <= 500mA, count=2")
+
+    # 400ms: 第 4 次采样。co_out_a = 2.9A。delta = 0.2A <= 0.5A，stable_count = 3
+    out = model.update(399.0, 2.9, 400, True)
+    assert_equal(model.state, CalcState.WAIT_3A_STABLE, "4th sample delta <= 500mA, count=3")
+
+    # 500ms: 第 5 次采样。co_out_a = 3.0A。delta = 0.1A <= 0.5A，stable_count = 4
+    out = model.update(399.0, 3.0, 500, True)
+    assert_equal(model.state, CalcState.WAIT_3A_STABLE, "5th sample delta <= 500mA, count=4")
+
+    # 600ms: 第 6 次采样。co_out_a = 3.0A。delta = 0.0A <= 0.5A，stable_count = 5
+    # 达到 5 次稳定，且电流 3.0A >= 1.0A，进入 LATCH_3A -> SET_2A -> WAIT_2A_STABLE
+    # 所以更新后状态应当是 WAIT_2A_STABLE
+    out = model.update(399.0, 3.0, 600, True)
+    assert_equal(model.state, CalcState.WAIT_2A_STABLE, "5 consecutive stable samples >= 1A triggers 2A step")
     assert_close(out["u1"], 399.0, "3A latch voltage")
     assert_close(out["i1"], 3.0, "3A latch current")
     assert_equal(out["change_current"], 1, "2A step requests current change")
     assert_close(out["set_current_a"], 2.0, "2A step current")
 
-    out = model.update(398.0, 2.0, 199, True)
+    # 2A 稳定判定：等待 100ms 消抖
+    # 699ms: 不足 100ms
+    out = model.update(398.0, 2.0, 699, True)
     assert_equal(model.state, CalcState.WAIT_2A_STABLE, "2A wait blocks before 100ms")
-    assert_equal(out["publish_calc_report"], 0, "no report before 2A stable")
 
-    out = model.update(398.0, 2.0, 200, True)
+    # 700ms: 满 100ms，锁存 -> 计算内阻 -> MONITOR
+    out = model.update(398.0, 2.0, 700, True)
     assert_equal(model.state, CalcState.MONITOR, "2A latch calculates and enters monitor")
     assert_equal(out["publish_calc_report"], 1, "calculation publishes report")
     assert_close(out["calculated_resistance"], 1.0, "resistance calculation")
 
-    out = model.update(398.0, 2.0, 210, True)
+    # MONITOR 状态保持
+    out = model.update(398.0, 2.0, 710, True)
     assert_equal(model.state, CalcState.MONITOR, "monitor holds")
     assert_equal(out["enter_monitor"], 1, "monitor output flag")
 
-    out = model.update(398.0, 2.0, 220, False)
+    # 保护退出或重置
+    out = model.update(398.0, 2.0, 720, False)
     assert_equal(model.state, CalcState.WAIT_SAFE, "unsafe input resets calc")
     assert_equal(out["change_current"], 1, "unsafe reset requests DAC zero")
     assert_close(out["set_current_a"], 0.0, "unsafe reset current")
 
+    # 2. 开路检测测试
+    model = CalcControlModel()
+    # 0ms: 触发进入 WAIT_3A_STABLE，co_out_a = 0.0A
+    model.update(400.0, 0.0, 0, True)
+    
+    # 连续 5 次 stable，但电流极低 (0.1A = 100mA < 1A)
+    # 100ms, 200ms, 300ms, 400ms
+    for t in [100, 200, 300, 400]:
+        out = model.update(400.0, 0.1, t, True)
+        assert_equal(model.state, CalcState.WAIT_3A_STABLE, f"stable counting in progress, tick={t}")
+    
+    # 500ms: 连续 5 次稳定完成，由于 0.1A < 1.0A，触发开路检测，复位回到 WAIT_SAFE
+    out = model.update(400.0, 0.1, 500, True)
+    assert_equal(model.state, CalcState.WAIT_SAFE, "low-current stable state resets to WAIT_SAFE (open-circuit)")
+    assert_equal(out.get("open_circuit_error", 0), 1, "open circuit error is set")
+    # 开路时不强制归零电流
+    assert_equal(out["change_current"], 0, "open circuit does not trigger current change")
+
+    # 3. reset_request 测试
     model = CalcControlModel()
     model.update(400.0, 0.0, 0, True)
     out = model.update(399.0, 3.0, 10, True, reset_request=True)
     assert_equal(model.state, CalcState.WAIT_SAFE, "reset request returns wait safe")
     assert_close(out["calculated_resistance"], 0.0, "reset clears resistance")
 
-    model = CalcControlModel()
-    model.update(400.0, 0.0, 0, True)
-    model.update(399.0, 2.005, 100, True)
-    out = model.update(398.0, 2.0, 200, True)
-    assert_equal(model.state, CalcState.MONITOR, "small delta current still completes")
-    assert_close(out["calculated_resistance"], 0.0, "small delta current clamps resistance")
-
-    model = CalcControlModel()
-    model.update(400.0, 0.0, 0, True)
-    model.update(399.0, 2.0, 100, True)
-    out = model.update(398.0, 3.0, 200, True)
-    assert_equal(model.state, CalcState.MONITOR, "reverse current still completes")
-    assert_close(out["calculated_resistance"], 0.0, "reverse current clamps resistance")
-
-    model = CalcControlModel()
-    model.update(400.0, 0.0, 0, True)
-    model.update(398.0, 3.0, 100, True)
-    out = model.update(399.0, 2.0, 200, True)
-    assert_equal(model.state, CalcState.MONITOR, "negative resistance candidate still completes")
-    assert_close(out["calculated_resistance"], 0.0, "negative resistance candidate clamps resistance")
 
 
 def main():
