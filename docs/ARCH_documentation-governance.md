@@ -19,6 +19,7 @@
 | [LOGIC_adc-dsp.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/LOGIC_adc-dsp.md) | 5点滑动中值滤波、指数 EMA 滤波、温度双点线性插值、常规通道二阶解算链路的具体逻辑及数学公式。 | 串口 DMA 数据拷贝细节、Keil 工程配置参数。 | 修改数据转换比例、微调滤波窗口或优化标定算法时 |
 | [LOGIC_output-protection.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/LOGIC_output-protection.md) | 过温/过压/过流保护状态机状态转移图、跳闸迟滞计算、2秒观察期自恢复纯逻辑。 | 具体引脚配置代码、中断配置。 | 开发与验证最高优先级过温、过压、过流保护状态机逻辑时 |
 | [LOGIC_calc-control.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/LOGIC_calc-control.md) | 内阻计算纯状态机（WAIT_SAFE 至 MONITOR 九段设计）、R=(U1-U2)/(I1-I2) 滤波求解数学公式。 | 串口 DMA 数据搬移细节、GPIO 初始化。 | 开发与验证内阻九段测量状态机计算逻辑时 |
+| [plans/2026-06-03-calc-3a-stability-plan.md](plans/2026-06-03-calc-3a-stability-plan.md) | 已确认的 3A 动态判稳实施计划，覆盖测试顺序、受影响文件与回归命令。 | 任何新的架构真理、硬件常数定义或替代 `LOGIC_calc-control.md` 的行为规范。 | 执行本次 3A 动态判稳修正前，用于按步骤实施时 |
 
 
 ---
