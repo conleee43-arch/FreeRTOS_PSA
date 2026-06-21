@@ -1,3 +1,4 @@
+<a id="guide-developer"></a>
 # GUIDE_developer — 嵌入式与 GUI 开发标准指南
 
 ---
@@ -182,7 +183,7 @@ graph TD
 在修改或重构已有的模块代码（例如 ADC 滤波窗口或 UART 缓冲区尺寸）时，必须执行以下三步闭环以确保重构“零损失”：
 1. **快照备份**：对受影响的文件进行临时保存，并记录当前的 CNDTR 和 DMA 相关寄存器配置。
 2. **渐进式替换**：优先保证接口签名不发生变化（遵守 MISRA-C 规范的常指针与类型尺寸），逐步替换内部实现。
-3. **回归闭环**：修改完成后，必须连续、无错地通过 `check_adc_config.ps1` 和 `check_uart_gui_protocol.ps1` 校验。
+3. **回归闭环**：修改完成后，必须连续、无错地通过 `check_adc_config.ps1` 和 `check_uart_gui_protocol.ps1` 校验。其中 `check_uart_gui_protocol.ps1` 不仅检查串口协议与 GUI 正则一致性，还会级联运行状态机行为校验与 GUI runtime 行为校验（`check_gui_runtime_behavior.ps1`）。
 
 ---
 

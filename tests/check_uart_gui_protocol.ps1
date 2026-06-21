@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $firmwarePath = Join-Path $repoRoot 'Core/Src/app_freertos.c'
 $guiPath = Join-Path $repoRoot 'gui/main.py'
+$interfacePath = Join-Path $repoRoot 'docs/STANDARDS_interface.md'
 
 $behaviorPy = Join-Path $PSScriptRoot 'check_state_machines_behavior.py'
 if (Test-Path -LiteralPath $behaviorPy) {
@@ -14,8 +15,21 @@ if (Test-Path -LiteralPath $behaviorPy) {
     throw "Required behavioral test file is missing: check_state_machines_behavior.py"
 }
 
+$guiRuntimeBehavior = Join-Path $PSScriptRoot 'check_gui_runtime_behavior.ps1'
+if (Test-Path -LiteralPath $guiRuntimeBehavior) {
+    powershell -File $guiRuntimeBehavior
+    if ($LASTEXITCODE -ne 0) {
+        throw "GUI runtime layout/ack behavior check failed!"
+    }
+} else {
+    throw "Required GUI runtime behavior test file is missing: check_gui_runtime_behavior.ps1"
+}
+
 $firmware = Get-Content -Raw -LiteralPath $firmwarePath
 $gui = Get-Content -Raw -LiteralPath $guiPath
+$interface = Get-Content -Raw -LiteralPath $interfacePath
+$calcControlPath = Join-Path $repoRoot 'Core/Src/calc_control.c'
+$calcControl = Get-Content -Raw -LiteralPath $calcControlPath
 
 $patternMatch = [regex]::Match(
     $gui,
@@ -28,7 +42,7 @@ if (-not $patternMatch.Success) {
 }
 
 $guiPattern = $patternMatch.Groups['pattern'].Value
-$sampleMeasureLine = '[Measure] V1:223.90V V2:223.90V CO:10.80A VO:360.00V T:25.0C Vref:1.800V'
+$sampleMeasureLine = '[Measure] V1:223.90V V2:223.90V CO:10.80A VO:360.00V T:25.0C Vref:2.500V'
 $sampleMatch = [regex]::Match($sampleMeasureLine, $guiPattern)
 
 if (-not $sampleMatch.Success -or $sampleMatch.Groups.Count -ne 7) {
@@ -45,7 +59,7 @@ if (-not $calcPatternMatch.Success) {
     throw 'GUI CALC_PATTERN was not found in gui/main.py.'
 }
 
-$sampleCalcLine = '[Calc] R:2.000R U1:400.00V I1:3.00A U2:398.00V I2:2.00A IOC:12.00A'
+$sampleCalcLine = '[Calc] R:1.000R U1:400.00V I1:3.00A U2:399.00V I2:2.00A IOC:1.00A'
 $sampleCalcMatch = [regex]::Match($sampleCalcLine, $calcPatternMatch.Groups['pattern'].Value)
 
 if (-not $sampleCalcMatch.Success -or $sampleCalcMatch.Groups.Count -ne 7) {
@@ -107,17 +121,45 @@ if (-not $firmware.Contains('sizeof(code_buf)')) {
     throw 'Firmware raw ADC code diagnostics should be formatted in a separate UART DMA frame.'
 }
 
+$expectedCodeFormat = '[Code] 0:%u,1:%u,2:%u,3:%u,4:%u\r\n'
+if (-not $firmware.Contains($expectedCodeFormat)) {
+    throw "Firmware raw ADC diagnostics do not use the 5-channel KB format: $expectedCodeFormat"
+}
+
+if ($firmware.Contains('Measure_GetRawCode(5)')) {
+    throw 'Firmware still reads a sixth ADC raw code that should have been removed with VREFINT.'
+}
+
+if (-not $firmware.Contains('Measure_GetRawCode(4)')) {
+    throw 'Firmware raw ADC diagnostics are missing the temperature channel raw code.'
+}
+
 foreach ($needle in @(
     'strstr(cmd_buf, "SetDAC:")',
     'strtof(p_val, &endptr)',
     'Output_Control_Status_t control_status',
     'control_status = Output_Control_SetCurrent(target_val)',
     'if (control_status != OUTPUT_CONTROL_OK)',
+    'Calc_Control_IsClosedLoopActive()',
     'Measure_IsReady() && (Output_Protection_GetState() == OUTPUT_PROTECTION_NORMAL)',
     'if (controls_safe != 0U)',
     'strstr(cmd_buf, "SetOF:")',
     'control_status = Output_Control_Enable()',
-    'Output_Control_Disable()'
+    'Output_Control_Disable()',
+    'Output_Control_IsEnabled()',
+    'strstr(cmd_buf, "SystemReset")',
+    'NVIC_SystemReset();',
+    'OF_ENABLED',
+    'OF_DISABLED',
+    '[Error] OPEN_CIRCUIT_DETECTED',
+    '[Stable] Count:%u/%u Delta:%0.1fmA Wait:%ums',
+    '[DebugIOC] dU:%0.2fV dI:%0.2fA Rraw:%0.3fR Vac:%0.2fV VoutAvg:%0.2fV Pin:%0.1fW Pout:%0.1fW IOC:%0.2fA',
+    'strstr(cmd_buf, "DebugPause2A")',
+    'Calc_Control_PauseWait2A',
+    'strstr(cmd_buf, "DebugResume2A")',
+    'Calc_Control_ResumeWait2A',
+    'Calc_Control_IsWait2APaused',
+    'WAIT_2A_PAUSED'
 )) {
     if (-not $firmware.Contains($needle)) {
         throw "Firmware UART control path is missing expected implementation: $needle"
@@ -125,16 +167,104 @@ foreach ($needle in @(
 }
 
 foreach ($needle in @(
-    'cmd = f"SetDAC:{current_val:.2f}\r\n"',
-    'cmd = f"SetOF:{state}\r\n"',
-    'self.dac_spin.setRange(0.00, 10.00)',
-    'self.dac_spin.setValue(0.00)',
-    'self.dac_slider.setValue(0)',
-    'self.btn_of_en_on.clicked.connect(lambda: self.transmit_of_en_setting(1))',
-    'self.btn_of_en_off.clicked.connect(lambda: self.transmit_of_en_setting(0))'
+    'static volatile uint8_t s_pause_state_ack_pending = 0U;',
+    'static volatile uint8_t s_resume_state_ack_pending = 0U;',
+    's_pause_state_ack_pending = 1U;',
+    's_resume_state_ack_pending = 1U;',
+    's_pause_state_ack_pending = 0U;',
+    's_resume_state_ack_pending = 0U;'
+)) {
+    if (-not $firmware.Contains($needle)) {
+        throw "Calc state observer dedupe is missing expected ack-suppression hook: $needle"
+    }
+}
+
+$pauseDedupePattern = 'if\s*\(\s*\(current_state == CALC_CONTROL_WAIT_2A_STABLE\)\s*&&\s*\(wait2a_paused != 0U\)\s*\)[\s\S]*?s_pause_state_ack_pending'
+if (-not [regex]::IsMatch($firmware, $pauseDedupePattern)) {
+    throw 'Paused-state publisher must consume the command-ack suppression flag before posting a duplicate WAIT_2A_PAUSED frame.'
+}
+
+$resumeDedupePattern = 'else if\s*\(current_state != last_state\)[\s\S]*?s_resume_state_ack_pending'
+if (-not [regex]::IsMatch($firmware, $resumeDedupePattern)) {
+    throw 'Resumed WAIT_2A_STABLE publisher must consume the command-ack suppression flag before posting a duplicate WAIT_2A_STABLE_10S frame.'
+}
+
+$resumeOrderPattern = 'else if\s*\(current_state != last_state\)\s*\{[\s\S]*?if\s*\(\s*\(current_state == CALC_CONTROL_WAIT_2A_STABLE\)\s*&&\s*\(s_resume_state_ack_pending != 0U\)\s*\)[\s\S]*?last_state = current_state;'
+if (-not [regex]::IsMatch($firmware, $resumeOrderPattern)) {
+    throw 'Resumed WAIT_2A_STABLE publisher must clear the ack flag before caching current_state.'
+}
+
+foreach ($needle in @(
+    'taskENTER_CRITICAL();',
+    'taskEXIT_CRITICAL();'
+)) {
+    if (-not $calcControl.Contains($needle)) {
+        throw "Calc control pause/resume paths must use critical sections: $needle"
+    }
+}
+
+$pauseCriticalPattern = 'uint8_t Calc_Control_PauseWait2A\(uint32_t tick_ms\)[\s\S]*?taskENTER_CRITICAL\(\);[\s\S]*?s_wait2a_paused = 1U;[\s\S]*?taskEXIT_CRITICAL\(\);'
+if (-not [regex]::IsMatch($calcControl, $pauseCriticalPattern)) {
+    throw 'Calc_Control_PauseWait2A must lock its shared state with a critical section.'
+}
+
+$resumeCriticalPattern = 'uint8_t Calc_Control_ResumeWait2A\(uint32_t tick_ms\)[\s\S]*?taskENTER_CRITICAL\(\);[\s\S]*?s_state_start_tick \+= pause_elapsed;[\s\S]*?taskEXIT_CRITICAL\(\);'
+if (-not [regex]::IsMatch($calcControl, $resumeCriticalPattern)) {
+    throw 'Calc_Control_ResumeWait2A must lock its shared state with a critical section.'
+}
+
+$wait2aCriticalPattern = 'case CALC_CONTROL_WAIT_2A_STABLE:[\s\S]*?taskENTER_CRITICAL\(\);[\s\S]*?s_wait2a_paused[\s\S]*?taskEXIT_CRITICAL\(\);'
+if (-not [regex]::IsMatch($calcControl, $wait2aCriticalPattern)) {
+    throw 'WAIT_2A_STABLE evaluation must snapshot pause state under a critical section.'
+}
+
+foreach ($needle in @(
+    'static void PostCalcStateLine(const char *state_str)',
+    'PostCalcStateLine("SET_3A")',
+    'PostCalcStateLine("LATCH_3A")',
+    'PostCalcStateLine("SET_2A")',
+    'PostCalcStateLine("LATCH_2A")',
+    'PostCalcStateLine("CALC_RESISTANCE")'
+)) {
+    if (-not $firmware.Contains($needle)) {
+        throw "Calc transient state publication is missing expected explicit observer hook: $needle"
+    }
+}
+
+$stableBeforeTransientPattern = '\[Stable\] Count:%u/%u Delta:%0\.1fmA Wait:%ums[\s\S]*?PostCalcStateLine\("LATCH_3A"\)'
+if (-not [regex]::IsMatch($firmware, $stableBeforeTransientPattern)) {
+    throw 'Transient 3A completion states must be emitted after the Stable diagnostic block so Count:5/5 appears before LATCH_3A.'
+}
+
+foreach ($needle in @(
+    'self.system_group = QGroupBox("系统控制", central_widget)',
+    'self.diag_group = QGroupBox("状态与内阻诊断", central_widget)',
+    'self.btn_system_reset.clicked.connect(self.send_system_reset)',
+    'self.btn_pause2a',
+    'self.toggle_pause2a',
+    'self.update_pause2a_button_state',
+    'WAIT_2A_PAUSED',
+    'DebugPause2A',
+    'DebugResume2A',
+    'self.btn_pause2a.setEnabled(False)'
 )) {
     if (-not $gui.Contains($needle)) {
         throw "GUI control path is missing expected implementation: $needle"
+    }
+}
+
+foreach ($needle in @(
+    'SystemReset\r\n',
+    '[Stable] Count:<stable_count>/<stable_target> Delta:<delta_mA>mA Wait:<elapsed_ms>ms',
+    '[Error] OPEN_CIRCUIT_DETECTED',
+    'DebugPause2A',
+    'DebugResume2A',
+    '[State] STATE:WAIT_2A_PAUSED',
+    '[State] STATE:PAUSE_FAILED',
+    '[State] STATE:RESUME_FAILED'
+)) {
+    if (-not $interface.Contains($needle)) {
+        throw "Interface standard is missing expected command or diagnostic line: $needle"
     }
 }
 
@@ -142,8 +272,8 @@ $dacControlPath = Join-Path $repoRoot 'Core/Src/dac_control.c'
 $dacControl = Get-Content -Raw -LiteralPath $dacControlPath
 foreach ($needle in @(
     'if (current_A < 0.0f)',
-    'if (current_A > 10.0f)',
-    'current_A = 10.0f;',
+    'if (current_A > 15.0f)',
+    'current_A = 15.0f;',
     'DAC_Control_SetValue(val_u);'
 )) {
     if (-not $dacControl.Contains($needle)) {
@@ -164,7 +294,8 @@ foreach ($needle in @(
     'void Output_Control_Disable(void)',
     'Output_Control_Status_t Output_Control_SetCurrent(float current_A)',
     'void Output_Control_Disable(void)',
-    'void Output_Control_ClearFaultOutput(void)'
+    'void Output_Control_ClearFaultOutput(void)',
+    'uint8_t Output_Control_IsEnabled(void)'
 )) {
     if (-not $outputControlHeader.Contains($needle)) {
         throw "Output control header is missing expected status API: $needle"
@@ -172,17 +303,21 @@ foreach ($needle in @(
 }
 
 foreach ($needle in @(
+    'static volatile uint8_t s_output_enabled = 0U;',
     'void Output_Control_Init(void)',
     'Output_Control_Status_t Output_Control_Enable(void)',
     'Output_Control_Status_t Output_Control_SetCurrent(float current_A)',
     'void Output_Control_ClearFaultOutput(void)',
+    'uint8_t Output_Control_IsEnabled(void)',
     'taskENTER_CRITICAL();',
     'taskEXIT_CRITICAL();',
     'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_RESET)',
     'HAL_GPIO_WritePin(OF_EN_GPIO_Port, OF_EN_Pin, GPIO_PIN_SET)',
+    's_output_enabled = 1U;',
+    's_output_enabled = 0U;',
     'DAC_Control_UpdatePfcTargetCurrent(0.0f)',
     'DAC_Control_SetPfcCurrent(0.0f)',
-    '!(current_A >= 0.0f && current_A <= 10.0f)',
+    '!(current_A >= 0.0f && current_A <= 15.0f)',
     'Output_Protection_GetState() != OUTPUT_PROTECTION_NORMAL',
     'current_A != 0.0f',
     'return OUTPUT_CONTROL_REJECTED;',
@@ -313,21 +448,51 @@ if (-not $outputProtection.Contains('static volatile Output_Protection_State_t s
     throw 'Output protection state must be volatile because it is published across RTOS tasks.'
 }
 
-$calcControlPath = Join-Path $repoRoot 'Core/Src/calc_control.c'
-$calcControl = Get-Content -Raw -LiteralPath $calcControlPath
 foreach ($needle in @(
     'STEP_3A_STABLE_MS',
     'STEP_2A_STABLE_MS',
     'CALC_CONTROL_CALC_RESISTANCE',
     'float di = s_i1 - s_i2;',
     'if (di > 0.01f)',
-    'resistance_candidate = (s_u1 - s_u2) / di;',
+    'CALC_CONTROL_IOC_GAIN_K',
+    'CALC_CONTROL_IOC_MIN_A',
+    'CALC_CONTROL_IOC_MAX_A',
+    'static float s_ioc_target_a = 0.0f;',
+    'static uint8_t s_ioc_valid = 0U;',
+    'Calc_Control_IsClosedLoopActive',
+    'resistance_candidate = fabsf(s_u1 - s_u2) / di;',
     'if (resistance_candidate >= 0.0f)',
-    'CALC_CONTROL_MONITOR'
+    'CALC_CONTROL_MONITOR',
+    'static uint8_t s_wait2a_paused',
+    's_wait2a_paused = 1U',
+    's_wait2a_paused = 0U',
+    'Calc_Control_PauseWait2A',
+    'Calc_Control_ResumeWait2A',
+    'Calc_Control_IsWait2APaused'
 )) {
     if (-not $calcControl.Contains($needle)) {
         throw "Calc control state machine is missing expected timing/calculation logic: $needle"
     }
+}
+
+$closedLoopRejectPattern = 'char \*p_val = strstr\(cmd_buf, "SetDAC:"\);[\s\S]*?Calc_Control_IsClosedLoopActive\(\)[\s\S]*?UartQueue_PostBytes\(MSG_TYPE_STATE, rejected_msg'
+if (-not [regex]::IsMatch($firmware, $closedLoopRejectPattern)) {
+    throw 'SetDAC path must reject manual current commands once the calc closed-loop IOC target is active.'
+}
+
+foreach ($needle in @(
+    'static uint8_t s_open_circuit_latched = 0U;',
+    's_open_circuit_latched = 0U;',
+    's_open_circuit_latched = 1U;'
+)) {
+    if (-not $calcControl.Contains($needle)) {
+        throw "Calc control state machine is missing expected open-circuit latch behavior: $needle"
+    }
+}
+
+$openCircuitGatePattern = 'if\s*\(\s*input->safe_allowed\s*&&\s*\(s_open_circuit_latched\s*==\s*0U\)\s*\)'
+if (-not [regex]::IsMatch($calcControl, $openCircuitGatePattern)) {
+    throw 'Calc control WAIT_SAFE must block auto-restart while the open-circuit latch is set.'
 }
 
 foreach ($needle in @(

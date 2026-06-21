@@ -79,6 +79,8 @@ extern "C" {
     #error "ADC_Calib: MCU Series must be defined for calibration registers addresses!"
 #endif
 
+#define ADC_CALIB_FIXED_VREF_V         (2.5f)          /* KB 平台外部稳定 ADC 工作参考电压 */
+
 /* ==========================================
  * 2. 状态与警报标志定义 (位掩码)
  * ========================================== */

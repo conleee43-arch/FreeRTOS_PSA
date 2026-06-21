@@ -1,3 +1,4 @@
+<a id="logic-adc-dsp"></a>
 # LOGIC_adc-dsp — 核心信号滤波与动态自校准算法说明书
 
 ---

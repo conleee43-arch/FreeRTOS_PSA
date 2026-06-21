@@ -18,7 +18,7 @@
  * 1. 核心宏定义与类型声明
  * ========================================== */
 #define MEDIAN_WINDOW               5U          /* 5点中位数滑动窗口大小 */
-#define DEFAULT_VREF_PLUS           3.30f       /* 自校准异常时的备用默认 VREF+ */
+#define DEFAULT_VREF_PLUS           2.50f       /* KB 平台外部稳定 ADC 工作参考电压 */
 #define INVALID_SLOT_INDEX          0xFFFFFFFFU
 
 #define ADC_DRV_ENABLE_HW_CALIB     1U
@@ -39,7 +39,7 @@ typedef struct {
 __attribute__((aligned(32))) static uint16_t g_adc_dma_buffer[ADC_DRV_DMA_BUF_SIZE]; /* 150 字节大小的对齐 DMA 循环缓冲区 */
 
 static ADC_HandleTypeDef  *gp_hadc = (ADC_HandleTypeDef *)0;             /* 绑定的硬件 ADC 句柄 */
-static Median_Filter_t     g_filters[ADC_DRV_CHANNEL_CNT];              /* 6个通道的中值滤波器 */
+static Median_Filter_t     g_filters[ADC_DRV_CHANNEL_CNT];              /* 5个通道的中值滤波器 */
 static uint32_t            g_last_processed_slot = INVALID_SLOT_INDEX;  /* 上一个已处理的 DMA 组索引 */
 static volatile bool       g_driver_ready = false;                       /* 驱动就绪标志 */
 static bool                g_simulation_mode = false;                    /* 软件仿真测试模式 */
@@ -151,7 +151,7 @@ void Measure_Update(void)
         float v2_inst = 220.0f * 1.4142f * __builtin_sinf(sim_angle + 2.094f);
         float i_inst  = 8.5f + 0.8f * __builtin_sinf(sim_angle * 3.0f);
         float vo_inst = 398.5f + 3.2f * __builtin_cosf(sim_angle * 0.5f);
-        float vref    = 3.3015f + 0.002f * __builtin_sinf(sim_angle * 12.0f);
+         float vref    = DEFAULT_VREF_PLUS;
         float temp    = 36.2f + 0.4f * __builtin_sinf(sim_angle * 0.2f);
         
         /* 填充至算法副本中，使 API 能读到一致仿真数据 */
@@ -163,9 +163,8 @@ void Measure_Update(void)
         /* 为物理解算模块模拟计算 */
         Physics_ProcessAll(vref);
         
-        /* 模拟刷新温度与基准 */
-        g_filters[4].filtered_val = (temp + 273.15f); /* 仅用作占位 */
-        g_filters[5].filtered_val = vref;
+         /* 模拟刷新温度占位 */
+         g_filters[4].filtered_val = (temp + 273.15f); /* 仅用作占位 */
         
         return;
     }
@@ -309,7 +308,7 @@ float Measure_GetVref(void)
     {
         static float sim_angle = 0.0f;
         sim_angle += 0.005f;
-        val = 3.3015f + 0.002f * __builtin_sinf(sim_angle * 12.0f);
+        val = DEFAULT_VREF_PLUS;
     }
     else
     {
@@ -428,12 +427,11 @@ static void Measure_UpdateRange(uint32_t start_slot, uint32_t end_slot)
         }
     }
 
-    /* 2. 抓取标定与温度通道中值滤波后的数据，驱动动态自校准算法 (阶段四 & 六) */
-    const float vrefint_raw = g_filters[5].filtered_val; /* Rank 6 为 VREFINT */
-    const float ts_raw      = g_filters[4].filtered_val; /* Rank 5 为 TEMPSENSOR */
+    /* 2. 抓取温度通道中值滤波后的数据，驱动固定 2.5V 标定算法 */
+    const float ts_raw = g_filters[4].filtered_val; /* Rank 5 为 TEMPSENSOR */
 
-    /* 喂入自校准计算引擎更新状态（内部执行 EMA 滤波与温度线性插值） */
-    (void)ADC_Calib_Update((uint16_t)vrefint_raw, (uint16_t)ts_raw);
+    /* 喂入自校准计算引擎更新状态（内部固定 2.5V 参考并执行温度线性插值） */
+    (void)ADC_Calib_Update(0U, (uint16_t)ts_raw);
 
     /* 3. 提取平滑参考电压 VREF_EMA，注入多通道转换解算链路 */
     ADC_Calib_Data_t cal_res;
@@ -501,8 +499,6 @@ uint16_t Measure_GetRawCode(uint8_t channel_idx)
                 raw_code = (uint16_t)((Measure_GetVoOut() / 200.0f / vref) * 4095.0f);
             } else if (channel_idx == 4U) {
                 raw_code = (uint16_t)(((Measure_GetTemp() - 30.0f) / 100.0f) * 400.0f + 1000.0f);
-            } else if (channel_idx == 5U) {
-                raw_code = (uint16_t)((1.212f / vref) * 4095.0f);
             } else {
                 /* 降级 */
             }

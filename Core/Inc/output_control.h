@@ -13,5 +13,6 @@ Output_Control_Status_t Output_Control_Enable(void);
 void Output_Control_Disable(void);
 Output_Control_Status_t Output_Control_SetCurrent(float current_A);
 void Output_Control_ClearFaultOutput(void);
+uint8_t Output_Control_IsEnabled(void);
 
 #endif

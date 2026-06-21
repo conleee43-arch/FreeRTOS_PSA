@@ -28,25 +28,66 @@ function Assert-Matches {
     }
 }
 
-Assert-Contains 'Core\Src\stm32g4xx_hal_msp.c' `
-    'HAL_SYSCFG_VREFBUF_VoltageScalingConfig(SYSCFG_VREFBUF_VOLTAGE_SCALE1);' `
-    'VREFBUF voltage scale is not configured.'
+function Assert-NotContains {
+    param(
+        [string]$Path,
+        [string]$Needle,
+        [string]$Message
+    )
 
-Assert-Contains 'Core\Src\stm32g4xx_hal_msp.c' `
-    'HAL_SYSCFG_VREFBUF_HighImpedanceConfig(SYSCFG_VREFBUF_HIGH_IMPEDANCE_DISABLE);' `
-    'VREF+ pin is not connected to VREFBUF output.'
+    $content = Get-Content -LiteralPath (Join-Path $root $Path) -Raw
+    if ($content.Contains($Needle)) {
+        throw $Message
+    }
+}
 
-Assert-Contains 'Core\Src\stm32g4xx_hal_msp.c' `
-    'HAL_SYSCFG_EnableVREFBUF();' `
-    'VREFBUF is not enabled.'
+Assert-Matches 'FreeRTOS_PSA.ioc' `
+    '^Mcu\.CPN=STM32G431KB' `
+    'CubeMX project is not retargeted to an STM32G431KB device.'
 
-Assert-Contains 'FreeRTOS_PSA.ioc' `
-    'SYS.VoltageScaling=SYSCFG_VREFBUF_VOLTAGE_SCALE1' `
-    'CubeMX project does not preserve VREFBUF voltage scale.'
+Assert-Matches 'FreeRTOS_PSA.ioc' `
+    '^Mcu\.Name=STM32G431K' `
+    'CubeMX project does not preserve a 32-pin STM32G431K target family.'
 
-Assert-Contains 'FreeRTOS_PSA.ioc' `
+Assert-Matches 'FreeRTOS_PSA.ioc' `
+    '^ProjectManager\.DeviceId=STM32G431KB' `
+    'CubeMX project DeviceId is not updated to STM32G431KB.'
+
+Assert-NotContains 'FreeRTOS_PSA.ioc' `
+    'Mcu.Pin11=VREF+' `
+    'CubeMX project still exposes a dedicated VREF+ pin from the older 48-pin package.'
+
+Assert-NotContains 'FreeRTOS_PSA.ioc' `
     'VREF+.Signal=VREFBUF_OUT' `
-    'CubeMX project does not preserve VREFBUF output on VREF+.'
+    'CubeMX project still routes VREF+ to VREFBUF output.'
+
+Assert-NotContains 'Core\Src\stm32g4xx_hal_msp.c' `
+    'HAL_SYSCFG_VREFBUF_VoltageScalingConfig(' `
+    'VREFBUF voltage scaling should not be configured for the KB external 2.5V reference design.'
+
+Assert-NotContains 'Core\Src\stm32g4xx_hal_msp.c' `
+    'HAL_SYSCFG_VREFBUF_HighImpedanceConfig(' `
+    'VREFBUF high-impedance routing should not be configured for the KB external 2.5V reference design.'
+
+Assert-NotContains 'Core\Src\stm32g4xx_hal_msp.c' `
+    'HAL_SYSCFG_EnableVREFBUF();' `
+    'VREFBUF must stay disabled on the KB external 2.5V reference design.'
+
+Assert-Contains 'FreeRTOS_PSA.ioc' `
+    'ADC1.NbrOfConversion=5' `
+    'CubeMX project does not preserve a 5-channel ADC1 regular sequence.'
+
+Assert-NotContains 'FreeRTOS_PSA.ioc' `
+    'ADC1.Channel-5#ChannelRegularConversion=ADC_CHANNEL_VREFINT' `
+    'CubeMX project still includes VREFINT in the ADC1 regular scan sequence.'
+
+Assert-NotContains 'FreeRTOS_PSA.ioc' `
+    'ADC1.ChannelVREF=ADC_CHANNEL_VREFINT' `
+    'CubeMX project still configures the legacy VREFINT channel helper.'
+
+Assert-NotContains 'FreeRTOS_PSA.ioc' `
+    'ADC_CHANNEL_VREFINT|' `
+    'CubeMX project still enables VREFINT in the ADC common internal path.'
 
 Assert-Matches 'FreeRTOS_PSA.ioc' `
     '^Mcu\.IP\d+=DAC1$' `
@@ -107,6 +148,18 @@ Assert-Contains 'MDK-ARM\FreeRTOS_PSA.uvprojx' `
 Assert-Contains 'Core\Src\adc_dma_driver.c' `
     '#define ADC_DRV_ENABLE_HW_CALIB     1U' `
     'ADC hardware calibration is disabled.'
+
+Assert-Contains 'Core\Src\adc.c' `
+    'hadc1.Init.NbrOfConversion = 5;' `
+    'ADC1 firmware init does not preserve the 5-channel regular conversion count.'
+
+Assert-NotContains 'Core\Src\adc.c' `
+    'sConfig.Channel = ADC_CHANNEL_VREFINT;' `
+    'ADC1 firmware init still configures VREFINT as a regular conversion channel.'
+
+Assert-Contains 'Core\Inc\adc_dma_driver.h' `
+    '#define ADC_DRV_CHANNEL_CNT         5U' `
+    'ADC DMA driver does not use the 5-channel KB layout.'
 
 Assert-Contains 'Core\Inc\adc_calib.h' `
     '#define ADC_CALIB_TS_CAL1_ADDR      (0x1FFF75A8UL)' `

@@ -49,3 +49,9 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 .DS_Store
+
+# ==========================================
+# 临时日志与临时提取文件过滤
+# ==========================================
+gui/log*.txt
+.tmp_docx_extract_utf8.txt

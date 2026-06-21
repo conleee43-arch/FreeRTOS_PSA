@@ -82,7 +82,7 @@ void DAC_Control_SetPfcCurrent(float current_A)
     }
     
     /* 
-     * 计算寄存器数字值：电流 * 409.5
+     * 计算寄存器数字值：电流 * 273.0
      * 加上 0.5f 实现类似于四舍五入的浮点到整型转换效果
      */
     float val_f = (current_A * DAC_CURRENT_FACTOR) + 0.5f;
@@ -103,7 +103,7 @@ float DAC_Control_GetPfcTargetCurrent(void)
 
 /**
   * @brief 动态更新内存中的 PFC 设定目标电流 (A)
-  * @param current_A: 设定目标电流，单位为安培 (A)，内部限制范围 0.0 ~ 10.0A
+  * @param current_A: 设定目标电流，单位为安培 (A)，内部限制范围 0.0 ~ 15.0A
   * @retval None
   */
 void DAC_Control_UpdatePfcTargetCurrent(float current_A)
@@ -112,10 +112,9 @@ void DAC_Control_UpdatePfcTargetCurrent(float current_A)
     {
         current_A = 0.0f;
     }
-    if (current_A > 10.0f)
+    if (current_A > 15.0f)
     {
-        current_A = 10.0f;
+        current_A = 15.0f;
     }
     s_pfc_target_current = current_A;
 }
-

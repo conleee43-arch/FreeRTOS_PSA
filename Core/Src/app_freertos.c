@@ -109,12 +109,15 @@ UartDma_Handler_t g_uart1_dma;
 
 static uint8_t g_usart1_rx_dma_buf[USART1_RX_DMA_BUF_SIZE];
 static uint8_t g_usart1_rx_main_buf[USART1_RX_MAIN_BUF_SIZE];
+static volatile uint8_t s_pause_state_ack_pending = 0U;
+static volatile uint8_t s_resume_state_ack_pending = 0U;
 
 void StartSampleFilterTask(void *argument);
 void StartEmergencyTask(void *argument);
 void StartCalcControlTask(void *argument);
 void StartUartTask(void *argument);
 static void UartQueue_PostBytes(UartMsgType_t type, const uint8_t *data, uint16_t len);
+static void PostCalcStateLine(const char *state_str);
 
 /* 数据接收并回显解析回调 */
 static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
@@ -140,7 +143,11 @@ static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
             float target_val = strtof(p_val, &endptr);
             if (p_val != endptr)
             {
-                if (controls_safe != 0U)
+                if (Calc_Control_IsClosedLoopActive() != 0U)
+                {
+                    UartQueue_PostBytes(MSG_TYPE_STATE, rejected_msg, (uint16_t)(sizeof(rejected_msg) - 1U));
+                }
+                else if (controls_safe != 0U)
                 {
                     control_status = Output_Control_SetCurrent(target_val);
                     if (control_status != OUTPUT_CONTROL_OK)
@@ -177,6 +184,59 @@ static void Usart1_RxParser_Callback(const uint8_t *data, uint16_t len)
             else if (*p_of == '0')
             {
                 Output_Control_Disable();
+            }
+        }
+
+        char *p_reset = strstr(cmd_buf, "SystemReset");
+        if (p_reset != NULL)
+        {
+            UartMsg_t reset_msg;
+            int reset_len = snprintf((char*)reset_msg.payload, sizeof(reset_msg.payload),
+                                     "\r\n[System] Resetting...\r\n");
+            if ((reset_len > 0) && ((size_t)reset_len < sizeof(reset_msg.payload)))
+            {
+                reset_msg.len = (uint16_t)reset_len;
+                UartQueue_PostBytes(MSG_TYPE_STATE, reset_msg.payload, reset_msg.len);
+            }
+            /* 延迟发送复位确认后再复位，确保消息发送完成 */
+            for (volatile uint32_t i = 0U; i < 100000U; i++) { }
+            NVIC_SystemReset();
+        }
+
+        /* 2A 稳定等待挂起调试命令 */
+        char *p_pause2a = strstr(cmd_buf, "DebugPause2A");
+        if (p_pause2a != NULL)
+        {
+            uint32_t tick = osKernelGetTickCount();
+            if (Calc_Control_PauseWait2A(tick) != 0U)
+            {
+                static const uint8_t pause_ok_msg[] = "\r\n[State] STATE:WAIT_2A_PAUSED\r\n";
+                s_pause_state_ack_pending = 1U;
+                s_resume_state_ack_pending = 0U;
+                UartQueue_PostBytes(MSG_TYPE_STATE, pause_ok_msg, (uint16_t)(sizeof(pause_ok_msg) - 1U));
+            }
+            else
+            {
+                static const uint8_t pause_fail_msg[] = "\r\n[State] STATE:PAUSE_FAILED\r\n";
+                UartQueue_PostBytes(MSG_TYPE_STATE, pause_fail_msg, (uint16_t)(sizeof(pause_fail_msg) - 1U));
+            }
+        }
+
+        char *p_resume2a = strstr(cmd_buf, "DebugResume2A");
+        if (p_resume2a != NULL)
+        {
+            uint32_t tick = osKernelGetTickCount();
+            if (Calc_Control_ResumeWait2A(tick) != 0U)
+            {
+                static const uint8_t resume_ok_msg[] = "\r\n[State] STATE:WAIT_2A_STABLE_10S\r\n";
+                s_resume_state_ack_pending = 1U;
+                s_pause_state_ack_pending = 0U;
+                UartQueue_PostBytes(MSG_TYPE_STATE, resume_ok_msg, (uint16_t)(sizeof(resume_ok_msg) - 1U));
+            }
+            else
+            {
+                static const uint8_t resume_fail_msg[] = "\r\n[State] STATE:RESUME_FAILED\r\n";
+                UartQueue_PostBytes(MSG_TYPE_STATE, resume_fail_msg, (uint16_t)(sizeof(resume_fail_msg) - 1U));
             }
         }
     }
@@ -283,13 +343,12 @@ void StartSampleFilterTask(void *argument)
                 print_tick = current_tick;
 
                 int code_len = snprintf(code_buf, sizeof(code_buf),
-                                        "[Code] 0:%u,1:%u,2:%u,3:%u,4:%u,5:%u\r\n",
+                                        "[Code] 0:%u,1:%u,2:%u,3:%u,4:%u\r\n",
                                         (unsigned int)Measure_GetRawCode(0),
                                         (unsigned int)Measure_GetRawCode(1),
                                         (unsigned int)Measure_GetRawCode(2),
                                         (unsigned int)Measure_GetRawCode(3),
-                                        (unsigned int)Measure_GetRawCode(4),
-                                        (unsigned int)Measure_GetRawCode(5));
+                                        (unsigned int)Measure_GetRawCode(4));
 
                 if ((code_len > 0) && ((size_t)code_len < sizeof(code_buf)))
                 {
@@ -319,6 +378,7 @@ void StartEmergencyTask(void *argument)
     Output_Protection_Input_t prot_in;
     Output_Protection_Output_t prot_out;
     Output_Protection_State_t last_state = OUTPUT_PROTECTION_NORMAL;
+    uint8_t last_output_enabled = Output_Control_IsEnabled();
 
     Output_Protection_Init();
 
@@ -354,6 +414,24 @@ void StartEmergencyTask(void *argument)
             if (calcControlTaskHandle != NULL)
             {
                 (void)osThreadFlagsSet(calcControlTaskHandle, CALC_CONTROL_RESET_FLAG);
+            }
+        }
+
+        uint8_t current_output_enabled = Output_Control_IsEnabled();
+        if (current_output_enabled != last_output_enabled)
+        {
+            last_output_enabled = current_output_enabled;
+
+            UartMsg_t of_state_msg;
+            const char *of_state_str = (current_output_enabled != 0U) ? "OF_ENABLED" : "OF_DISABLED";
+            int of_state_len = snprintf((char*)of_state_msg.payload,
+                                        sizeof(of_state_msg.payload),
+                                        "\r\n[State] STATE:%s\r\n",
+                                        of_state_str);
+            if ((of_state_len > 0) && ((size_t)of_state_len < sizeof(of_state_msg.payload)))
+            {
+                of_state_msg.len = (uint16_t)of_state_len;
+                UartQueue_PostBytes(MSG_TYPE_STATE, of_state_msg.payload, of_state_msg.len);
             }
         }
 
@@ -400,7 +478,7 @@ void StartCalcControlTask(void *argument)
         uint8_t reset_request = 0U;
         if ((reset_flags & osFlagsError) != 0U)
         {
-            reset_request = 1U;
+            /* osThreadFlagsClear 调用失败，不做处理 */
         }
         else if ((reset_flags & CALC_CONTROL_RESET_FLAG) != 0U)
         {
@@ -412,8 +490,65 @@ void StartCalcControlTask(void *argument)
         calc_in.tick_ms = osKernelGetTickCount();
         calc_in.safe_allowed = (Output_Protection_GetState() == OUTPUT_PROTECTION_NORMAL);
         calc_in.reset_request = reset_request;
+        /* 交流线阻限功率输入：交流双通道采样 + 直流母线电压 */
+        calc_in.vac_ch1_v = Measure_GetV1In();
+        calc_in.vac_ch2_v = Measure_GetV2In();
+        calc_in.vdc_sample_v = calc_in.vo_out_v;
 
         Calc_Control_Update(&calc_in, &calc_out);
+
+        Calc_Control_State_t current_state = Calc_Control_GetState();
+        uint8_t wait2a_paused = Calc_Control_IsWait2APaused();
+
+        /* 开路检测错误上报 */
+        if (calc_out.open_circuit_error)
+        {
+            UartMsg_t error_msg;
+            int error_len = snprintf((char*)error_msg.payload, sizeof(error_msg.payload),
+                                      "\r\n[Error] OPEN_CIRCUIT_DETECTED\r\n");
+            if ((error_len > 0) && ((size_t)error_len < sizeof(error_msg.payload)))
+            {
+                error_msg.len = (uint16_t)error_len;
+                UartQueue_PostBytes(MSG_TYPE_STATE, error_msg.payload, error_msg.len);
+            }
+        }
+
+        /* 稳定判定过程上报 */
+        if (calc_out.stable_update)
+        {
+            UartMsg_t stable_msg;
+            int stable_len = snprintf((char*)stable_msg.payload, sizeof(stable_msg.payload),
+                                       "\r\n[Stable] Count:%u/%u Delta:%0.1fmA Wait:%ums\r\n",
+                                       calc_out.stable_count,
+                                       calc_out.stable_target,
+                                       calc_out.stable_delta_ma,
+                                       (unsigned int)calc_out.stable_wait_ms);
+            if ((stable_len > 0) && ((size_t)stable_len < sizeof(stable_msg.payload)))
+            {
+                stable_msg.len = (uint16_t)stable_len;
+                UartQueue_PostBytes(MSG_TYPE_STATE, stable_msg.payload, stable_msg.len);
+            }
+        }
+
+        if ((current_state == CALC_CONTROL_WAIT_3A_STABLE) &&
+            (calc_out.change_current != 0U) &&
+            (calc_out.set_current_a == 3.0f))
+        {
+            PostCalcStateLine("SET_3A");
+        }
+        else if ((current_state == CALC_CONTROL_WAIT_2A_STABLE) &&
+                 (calc_out.change_current != 0U) &&
+                 (calc_out.i1 > 0.0f))
+        {
+            PostCalcStateLine("LATCH_3A");
+            PostCalcStateLine("SET_2A");
+        }
+
+        if (calc_out.publish_calc_report != 0U)
+        {
+            PostCalcStateLine("LATCH_2A");
+            PostCalcStateLine("CALC_RESISTANCE");
+        }
 
         if (calc_out.change_current)
         {
@@ -428,20 +563,87 @@ void StartCalcControlTask(void *argument)
         {
             UartMsg_t report_msg;
             int report_len = snprintf((char*)report_msg.payload, sizeof(report_msg.payload),
-                                      "\r\n[Calc] R:%0.3fR U1:%0.2fV I1:%0.2fA U2:%0.2fV I2:%0.2fA IOC:12.00A\r\n",
+                                      "\r\n[Calc] R:%0.3fR U1:%0.2fV I1:%0.2fA U2:%0.2fV I2:%0.2fA IOC:%0.2fA\r\n",
                                       calc_out.calculated_resistance,
                                       calc_out.u1, calc_out.i1,
-                                      calc_out.u2, calc_out.i2);
+                                      calc_out.u2, calc_out.i2,
+                                      calc_out.ioc);
             if ((report_len > 0) && ((size_t)report_len < sizeof(report_msg.payload)))
             {
                 report_msg.len = (uint16_t)report_len;
                 UartQueue_PostBytes(MSG_TYPE_CALC, report_msg.payload, report_msg.len);
             }
+
+            UartMsg_t debug_ioc_msg;
+            int debug_ioc_len = snprintf((char*)debug_ioc_msg.payload, sizeof(debug_ioc_msg.payload),
+                                         "\r\n[DebugIOC] dU:%0.2fV dI:%0.2fA Rraw:%0.3fR Vac:%0.2fV VoutAvg:%0.2fV Pin:%0.1fW Pout:%0.1fW IOC:%0.2fA\r\n",
+                                         calc_out.du_v,
+                                         calc_out.di_a,
+                                         calc_out.r_raw_ohm,
+                                         calc_out.vac_eff_v,
+                                         calc_out.vout_avg_v,
+                                         calc_out.pin_w,
+                                         calc_out.pout_w,
+                                         calc_out.ioc);
+            if ((debug_ioc_len > 0) && ((size_t)debug_ioc_len < sizeof(debug_ioc_msg.payload)))
+            {
+                debug_ioc_msg.len = (uint16_t)debug_ioc_len;
+                UartQueue_PostBytes(MSG_TYPE_CALC, debug_ioc_msg.payload, debug_ioc_msg.len);
+            }
+
+            /* 交流线阻限功率诊断帧：上报折算限值与 DAC 量化码 */
+            UartMsg_t ll_msg;
+            int ll_len = snprintf((char*)ll_msg.payload, sizeof(ll_msg.payload),
+                                  "\r\n[LineLimit] Iac:%0.2fA Idc:%0.2fA DAC:%u Retest:%u\r\n",
+                                  calc_out.iac_limit_a,
+                                  calc_out.idc_limit_a,
+                                  (unsigned int)calc_out.dac_code,
+                                  (unsigned int)calc_out.need_retest);
+            if ((ll_len > 0) && ((size_t)ll_len < sizeof(ll_msg.payload)))
+            {
+                ll_msg.len = (uint16_t)ll_len;
+                UartQueue_PostBytes(MSG_TYPE_CALC, ll_msg.payload, ll_msg.len);
+            }
+
+            /* 安全链未通过时上报需要重测，便于上位机感知回退 */
+            if (calc_out.need_retest)
+            {
+                UartMsg_t retest_msg;
+                int retest_len = snprintf((char*)retest_msg.payload, sizeof(retest_msg.payload),
+                                          "\r\n[State] STATE:NEED_RETEST\r\n");
+                if ((retest_len > 0) && ((size_t)retest_len < sizeof(retest_msg.payload)))
+                {
+                    retest_msg.len = (uint16_t)retest_len;
+                    UartQueue_PostBytes(MSG_TYPE_STATE, retest_msg.payload, retest_msg.len);
+                }
+            }
         }
 
-        Calc_Control_State_t current_state = Calc_Control_GetState();
-        if (current_state != last_state)
+        /* 如果处于 2A 等待挂起状态，通过虚拟状态映射上报 WAIT_2A_PAUSED */
+        if ((current_state == CALC_CONTROL_WAIT_2A_STABLE) && (wait2a_paused != 0U))
         {
+            if (last_state != 0xFEU)
+            {
+                last_state = 0xFEU;
+                if (s_pause_state_ack_pending != 0U)
+                {
+                    s_pause_state_ack_pending = 0U;
+                }
+                else
+                {
+                    static const uint8_t paused_msg[] = "\r\n[State] STATE:WAIT_2A_PAUSED\r\n";
+                    UartQueue_PostBytes(MSG_TYPE_STATE, paused_msg, (uint16_t)(sizeof(paused_msg) - 1U));
+                }
+            }
+        }
+        else if (current_state != last_state)
+        {
+            if ((current_state == CALC_CONTROL_WAIT_2A_STABLE) && (s_resume_state_ack_pending != 0U))
+            {
+                s_resume_state_ack_pending = 0U;
+                continue;
+            }
+
             last_state = current_state;
 
             const char* state_str = "WAIT_SAFE";
@@ -452,19 +654,13 @@ void StartCalcControlTask(void *argument)
                 case CALC_CONTROL_WAIT_3A_STABLE: state_str = "WAIT_3A_STABLE"; break;
                 case CALC_CONTROL_LATCH_3A: state_str = "LATCH_3A"; break;
                 case CALC_CONTROL_SET_2A: state_str = "SET_2A"; break;
-                case CALC_CONTROL_WAIT_2A_STABLE: state_str = "WAIT_2A_STABLE"; break;
+                case CALC_CONTROL_WAIT_2A_STABLE: state_str = "WAIT_2A_STABLE_10S"; break;
                 case CALC_CONTROL_LATCH_2A: state_str = "LATCH_2A"; break;
                 case CALC_CONTROL_CALC_RESISTANCE: state_str = "CALC_RESISTANCE"; break;
                 case CALC_CONTROL_MONITOR: state_str = "MONITOR"; break;
             }
 
-            UartMsg_t state_msg;
-            int state_len = snprintf((char*)state_msg.payload, sizeof(state_msg.payload), "\r\n[State] STATE:%s\r\n", state_str);
-            if ((state_len > 0) && ((size_t)state_len < sizeof(state_msg.payload)))
-            {
-                state_msg.len = (uint16_t)state_len;
-                UartQueue_PostBytes(MSG_TYPE_STATE, state_msg.payload, state_msg.len);
-            }
+            PostCalcStateLine(state_str);
         }
 
         osDelay(10);
@@ -560,6 +756,25 @@ static void UartQueue_PostBytes(UartMsgType_t type, const uint8_t *data, uint16_
                 (void)osMessageQueuePut(uartMsgQueueHandle, &msg, 0U, 0U);
             }
         }
+    }
+}
+
+static void PostCalcStateLine(const char *state_str)
+{
+    UartMsg_t state_msg;
+    int state_len;
+
+    if (state_str == NULL)
+    {
+        return;
+    }
+
+    state_len = snprintf((char*)state_msg.payload, sizeof(state_msg.payload),
+                         "\r\n[State] STATE:%s\r\n", state_str);
+    if ((state_len > 0) && ((size_t)state_len < sizeof(state_msg.payload)))
+    {
+        state_msg.len = (uint16_t)state_len;
+        UartQueue_PostBytes(MSG_TYPE_STATE, state_msg.payload, state_msg.len);
     }
 }
 

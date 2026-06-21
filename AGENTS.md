@@ -1,3 +1,4 @@
+<a id="agent-context"></a>
 # FreeRTOS_PSA — Agent Context (v1.0.0) — 2026-05-31
 
 ## Project Setup
@@ -10,7 +11,7 @@
 ## Documentation Priority
 - `docs/` 是项目行为、架构、协议和实现逻辑的唯一真理源泉。
 - `AGENTS.md` 仅作为高优先级的会话入口、关键规则、元数据和高层引导，绝不包含详细的开发标准和逻辑细节。
-- **遇到不确定事项？** 请首先加载并阅读 [ARCH_documentation-governance.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/ARCH_documentation-governance.md)。
+- **遇到不确定事项？** 请首先加载并阅读 [docs/ARCH_documentation-governance.md](docs/ARCH_documentation-governance.md#documentation-governance)。
 
 ## Commands
 - **编译固件 (MDK-ARM)**: 启动 Keil uVision，打开 `MDK-ARM/FreeRTOS_PSA.uvprojx` 编译工程。
@@ -72,4 +73,3 @@
 ### 4. 目标驱动执行 (Goal-Driven Execution)
 - **定义验证机制**：为复杂或多步骤任务设定明确的验收验证条件，而不是仅使用含糊的“让其运行”。
 - **闭环验证循环**：对于长流程开发，应当通过制定类似 `1. [步骤A] -> 验证: [测试A] 2. [步骤B] -> 验证: [测试B]` 的分步验证计划，确保每一步的产出都在验证环中成功收敛。
-

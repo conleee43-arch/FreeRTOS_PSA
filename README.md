@@ -38,14 +38,30 @@ graph TD
     end
     
     subgraph 任务编排与调度 (ORCHESTRATOR)
-        I[defaultTask 1000Hz 采样更新] -->|高频更新状态机| H
+        I[sampleFilterTask 1ms 采样/滤波] -->|高频更新物理解算| H
         I -->|1000ms 心跳| J[广播 Measure 与 Code 帧]
-        K[uartTask 200Hz 串口轮询] -->|分发数据包| L[Usart1_RxParser_Callback]
+        E1[emergencyTask 2ms 保护轮询] -->|过温/过压/过流门控| O[Output Control]
+        C1[calcControlTask 10ms 内阻状态机] -->|3A/2A 阶跃与 Calc 帧| O
+        K[uartTask 5ms 串口轮询] -->|分发命令与非阻塞发送| L[Usart1_RxParser_Callback]
     end
 
     J -->|物理串口| M[PySide6 工业监测看板]
-    M -->|下发 SetDAC 目标电流| L
+    C1 -->|State/Stable/Calc 诊断帧| M
+    M -->|SystemReset / DebugPause2A / DebugResume2A / 手动命令| L
 ```
+
+---
+
+### 2.1 当前 FreeRTOS 任务拓扑
+
+当前固件由四个应用任务协同运行：
+
+| 任务 | 周期 | 职责 |
+|---|---:|---|
+| `sampleFilterTask` | 1ms | 驱动 `Measure_Update()`，每 1000ms 发送 `[Measure]` 与 `[Code]` 帧 |
+| `emergencyTask` | 2ms | 轮询输出保护状态机，执行 OF_EN/DAC 安全动作，并上报保护/输出状态 |
+| `calcControlTask` | 10ms | 执行内阻九段状态机，控制 3A/2A 阶跃，输出 `[Stable]`、`[Calc]` 与计算状态帧 |
+| `uartTask` | 5ms | 轮询 UART DMA RX、解析上位机命令、串行化发送队列 |
 
 ---
 
@@ -71,14 +87,17 @@ python main.py
 
 ## 4. 自动化回归测试与校验
 
-为防止 CubeMX 重新生成代码时覆写关键的 VREFBUF 基准配置，或串口协议字段与 GUI 的正则表达式捕获逻辑产生脱节，项目在 `tests/` 文件夹中提供了两个 PowerShell 自动化测试脚本，执行命令如下：
+为防止 CubeMX 重新生成代码时覆写关键的 VREFBUF 基准配置，或串口协议字段与 GUI 的正则表达式捕获逻辑产生脱节，项目在 `tests/` 文件夹中提供了 PowerShell 自动化测试脚本，执行命令如下：
 
 ```powershell
 # 1. 运行硬件标定与内部基准地址自检脚本
 powershell -File tests/check_adc_config.ps1
 
-# 2. 运行通信行协议与上位机正则匹配一致性脚本
+# 2. 运行通信行协议、状态机模型与 GUI runtime 一致性脚本
 powershell -File tests/check_uart_gui_protocol.ps1
+
+# 3. 如需单独检查 GUI 运行态布局与交互契约
+powershell -File tests/check_gui_runtime_behavior.ps1
 ```
 
 ---
@@ -88,12 +107,12 @@ powershell -File tests/check_uart_gui_protocol.ps1
 本项目遵循 `Diew/living-docs` 活文档体系规范。关于开发标准、架构机密以及协议定义的唯一真理源泉全部维护在 `docs/` 目录下。
 
 ### 5.1 会话快捷入口 (`AGENTS.md`)
-AI 代理在启动任务前默认会阅读项目根目录下的 [AGENTS.md](file:///d:/zhihai/Software/FreeRTOS_PSA/AGENTS.md) 文件。它包含高层项目元数据、基本测试命令以及防重构等八项防错 Guardrails 交互原则。
+AI 代理在启动任务前默认会阅读项目根目录下的 [AGENTS.md](AGENTS.md#agent-context) 文件。它包含高层项目元数据、基本测试命令以及防重构等八项防错 Guardrails 交互原则。
 
 ### 5.2 任务装载真理路由 (`docs/`)
-在开发或维护不同的子系统时，严禁盲目读取整个 `docs/` 文件夹。必须首先根据 [ARCH_documentation-governance.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/ARCH_documentation-governance.md) 文档注册表，按需装载对应的核心子文档组合：
+在开发或维护不同的子系统时，严禁盲目读取整个 `docs/` 文件夹。必须首先根据 [docs/ARCH_documentation-governance.md](docs/ARCH_documentation-governance.md#documentation-governance) 文档注册表，按需装载对应的核心子文档组合：
 
-- **开发指南与重构标准**：参考 [GUIDE_developer.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/GUIDE_developer.md)。包含 **200Hz Poll 轮询时间片标准**、TDD 决策树和零损失重构协议。
-- **硬件配置与通道定义**：参考 [ARCH_technical-specs.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/ARCH_technical-specs.md)。包含 170MHz 时钟、VREFBUF 内部电压缓冲 SCALE1 配置及静态表驱动解算属性。
-- **通信行协议与 GUI 接口**：参考 [STANDARDS_interface.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/STANDARDS_interface.md)。包含 `[Measure]` 帧格式、GUI 捕获正则表达式和 `SetDAC` 控制语法。
-- **核心解算算法**：参考 [LOGIC_adc-dsp.md](file:///d:/zhihai/Software/FreeRTOS_PSA/docs/LOGIC_adc-dsp.md)。包含滑动中值滤波、EMA 基准滤波和双点线性插值的数学公式实现。
+- **开发指南与重构标准**：参考 [docs/GUIDE_developer.md](docs/GUIDE_developer.md#guide-developer)。包含 **200Hz Poll 轮询时间片标准**、TDD 决策树和零损失重构协议。
+- **硬件配置与通道定义**：参考 [docs/ARCH_technical-specs.md](docs/ARCH_technical-specs.md#technical-specs)。包含 170MHz 时钟、VREFBUF 内部电压缓冲 SCALE1 配置及静态表驱动解算属性。
+- **通信行协议与 GUI 接口**：参考 [docs/STANDARDS_interface.md](docs/STANDARDS_interface.md#standards-interface)。包含 `[Measure]`、`[Code]`、`[Calc]`、`[State]` 帧格式，GUI 捕获正则表达式，控制命令与安全门控回执语义。
+- **核心解算算法**：参考 [docs/LOGIC_adc-dsp.md](docs/LOGIC_adc-dsp.md#logic-adc-dsp)。包含滑动中值滤波、EMA 基准滤波和双点线性插值的数学公式实现。

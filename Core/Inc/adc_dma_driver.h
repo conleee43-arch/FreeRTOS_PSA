@@ -22,7 +22,7 @@ extern "C" {
 /* ==========================================
  * 1. 核心控制与配置宏定义
  * ========================================== */
-#define ADC_DRV_CHANNEL_CNT         6U      /* 规则扫描通道总数 */
+#define ADC_DRV_CHANNEL_CNT         5U      /* 规则扫描通道总数 */
 #define ADC_DRV_BUFFER_SLOTS        25U     /* 环形缓冲区 Slot 组数 */
 #define ADC_DRV_DMA_BUF_SIZE        (ADC_DRV_CHANNEL_CNT * ADC_DRV_BUFFER_SLOTS) /* 缓冲区半字总长度: 150 */
 

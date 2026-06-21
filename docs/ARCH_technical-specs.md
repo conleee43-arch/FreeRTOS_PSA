@@ -1,3 +1,4 @@
+<a id="technical-specs"></a>
 # ARCH_technical-specs — 底层系统硬件与架构技术规范
 
 ---
@@ -49,7 +50,7 @@ void SystemClock_Config(void)
 为防范供电网络噪声对 ADC 模拟信号输入造成干扰，芯片开启了内部集成的高精密基准电压缓冲器 (VREFBUF)，将其配置为 `SCALE1` (2.5V 物理参考电压基准)，并直接在 `VREF+` 引脚上物理输出。此特性对于保证模数转换的高一致性至关重要。
 
 ### 2.1 硬件自检与断言点
-项目采用自动化脚本 [check_adc_config.ps1](file:///d:/zhihai/Software/FreeRTOS_PSA/tests/check_adc_config.ps1) 强制要求固件使能 VREFBUF 硬件并防止被 CubeMX 意外覆写。
+项目采用自动化脚本 [../tests/check_adc_config.ps1](../tests/check_adc_config.ps1) 强制要求固件使能 VREFBUF 硬件并防止被 CubeMX 意外覆写。
 
 ---
 
@@ -59,13 +60,38 @@ void SystemClock_Config(void)
 
 | 硬件外设 | 触发事件 | DMA 资源 | 传输宽度 | 传输模式 | 硬件优先级 |
 |---|---|---|---|---|---|
-| **ADC1** | 多通道扫描就绪 | DMA1 Channel 3 | 16-bit (HalfWord) | Circular (循环乒乓) | High (高优先级) |
-| **USART1_RX** | 触发 Idle 空闲中断 | DMA1 Channel 1 | 8-bit (Byte) | Normal (不定长自愈) | Medium (中优先级) |
-| **USART1_TX** | 缓冲区发送为空 | DMA1 Channel 2 | 8-bit (Byte) | Normal (非阻塞链式) | Medium (中优先级) |
+| **ADC1** | 多通道扫描就绪 | DMA1 Channel 3 | 16-bit (HalfWord) | Circular (循环乒乓) | Low (`DMA_PRIORITY_LOW`) |
+| **USART1_RX** | 触发 Idle 空闲中断 | DMA1 Channel 1 | 8-bit (Byte) | Normal (不定长自愈) | Low (`DMA_PRIORITY_LOW`) |
+| **USART1_TX** | 缓冲区发送为空 | DMA1 Channel 2 | 8-bit (Byte) | Normal (非阻塞链式) | Low (`DMA_PRIORITY_LOW`) |
+
+当前优先级表反映 CubeMX/HAL 初始化代码中的实际配置。若未来要把 ADC 或 UART DMA 改为更高硬件优先级，必须同步修改 `adc.c` / `usart.c` 的 `DMA_PRIORITY_*` 配置、重新运行硬件配置检查，并在本表中记录变更原因。
 
 ---
 
-## 4. 扩展物理通道与 GPIO 控制资源
+## 4. ADC 驱动仿真/降级模式
+
+`adc_dma_driver.c` 包含一个用于无硬件句柄场景的防御性仿真入口：当 `Measure_Init()` 收到的 ADC 句柄 `Instance == NULL` 时，驱动不会继续启动真实 DMA，而是进入 `g_simulation_mode`，初始化校准与物理解算模块后返回 `HAL_OK`。
+
+仿真模式的目的：
+
+- 支持无真实 ADC 外设实例的主机侧或调试侧运行，避免初始化路径直接挂死。
+- 合成 V1/V2、CO、VO、Vref、Temp 等工业信号，使上层 `[Measure]`、保护状态机和 GUI 解析路径可以被观察。
+- 作为防御性降级/测试模式存在，不代表真实硬件测量链路的标定真理。
+
+仿真模式中原始 ADC 码由合成物理量反推得到，当前使用的反推比例常量为：
+
+| 仿真通道 | 反推比例 | 说明 |
+|---|---:|---|
+| `V1_IN` | `124.4f` | 用于把合成交流输入电压换算成近似 ADC 原始码 |
+| `V2_IN` | `124.4f` | 同上 |
+| `CO_OUT` | `6.0f` | 用于把合成输出电流换算成近似 ADC 原始码 |
+| `VO_OUT` | `200.0f` | 用于把合成输出电压换算成近似 ADC 原始码 |
+
+这些仿真常量只服务于合成波形可视化；真实硬件通道的唯一标定真理仍是下文 `adc_physics.c` 表驱动通道属性。
+
+---
+
+## 5. 扩展物理通道与 GPIO 控制资源
 
 为支持闭环 PFC 目标电流调节及保护机制，固件在硬件层配置了以下扩展资源：
 
@@ -76,7 +102,7 @@ void SystemClock_Config(void)
 
 ---
 
-## 5. 表驱动解算通道属性 (Table-Driven Calibration Table)
+## 6. 表驱动解算通道属性 (Table-Driven Calibration Table)
 
 项目利用“表驱动（Table-Driven）”设计对所有模拟电网和传感器引脚的物理转换因子进行了集中定义。每一物理通道与硬件调理比例（前级满量程物理量、引脚满量程模拟电压、直流偏置量）一一绑定，由 `adc_physics.c` 集中维护，结构如下：
 

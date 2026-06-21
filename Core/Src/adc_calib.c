@@ -102,22 +102,17 @@ uint32_t ADC_Calib_Init(const ADC_Calib_Config_t *p_config)
             gs_config.vref_min_limit = p_config->vref_min_limit;
 
             /* 4. 重置状态与解算结果 */
-            gs_calib_data.vref_inst        = p_config->default_vref;
-            gs_calib_data.vref_ema         = p_config->default_vref;
+            gs_calib_data.vref_inst        = ADC_CALIB_FIXED_VREF_V;
+            gs_calib_data.vref_ema         = ADC_CALIB_FIXED_VREF_V;
             gs_calib_data.chip_temp        = 25.0f; /* 初始默认常温 */
             gs_calib_data.status_flags     = ADC_CALIB_STATUS_OK;
             gs_calib_data.is_initialized   = 1U;    /* 标记初始化成功 */
-            
-            /* 5. 出厂标定码 ROM 物理存储做一次性校验，检测硬件是否支持标定数据 */
-            const uint16_t vrefint_cal = ADC_CALIB_READ_ROM16(ADC_CALIB_VREFINT_CAL_ADDR);
+             
+            /* 5. 出厂温度标定码 ROM 物理存储做一次性校验，检测硬件是否支持温度标定数据 */
             const uint16_t ts_cal1     = ADC_CALIB_READ_ROM16(ADC_CALIB_TS_CAL1_ADDR);
             const uint16_t ts_cal2     = ADC_CALIB_READ_ROM16(ADC_CALIB_TS_CAL2_ADDR);
-            
+             
             /* 对于 12/16 位 ADC，一般标定码物理上限设为 65535U */
-            if (ADC_Calib_ValidateCalCode(vrefint_cal, 65535U) == 0U)
-            {
-                gs_calib_data.status_flags |= ADC_CALIB_ERR_VREF_CAL_INVALID;
-            }
             if ((ADC_Calib_ValidateCalCode(ts_cal1, 65535U) == 0U) || 
                 (ADC_Calib_ValidateCalCode(ts_cal2, 65535U) == 0U) ||
                 (ts_cal2 <= ts_cal1))
@@ -138,76 +133,22 @@ uint32_t ADC_Calib_Init(const ADC_Calib_Config_t *p_config)
  */
 uint32_t ADC_Calib_Update(uint16_t vrefint_raw, uint16_t temp_raw)
 {
+    (void)vrefint_raw;
+
     /* 防御性保护：确保模块已正确初始化 */
     if (gs_calib_data.is_initialized == 0U)
     {
         return (ADC_CALIB_ERR_CONFIG);
     }
 
-    /* 每次周期更新清除上周期的瞬时报警和错误，但保留初始化检测出的 ROM 错误 */
-    gs_calib_data.status_flags &= (ADC_CALIB_ERR_VREF_CAL_INVALID | ADC_CALIB_ERR_TS_CAL_INVALID);
+    /* 每次周期更新清除上周期的瞬时报警和错误，仅保留初始化检测出的温度标定 ROM 错误 */
+    gs_calib_data.status_flags &= ADC_CALIB_ERR_TS_CAL_INVALID;
 
     /* ==========================================
-     * 阶段一：动态解算瞬时 VREF+ 参考电压
+     * 阶段一：固定外部 2.5V 参考电压
      * ========================================== */
-    float vref_new = gs_config.default_vref;
-    
-    /* 防零除保护与 ROM 标定码合理性校验 */
-    if (vrefint_raw == 0U)
-    {
-        gs_calib_data.status_flags |= ADC_CALIB_ERR_VREF_RAW_ZERO;
-        vref_new = gs_config.default_vref;
-    }
-    else if ((gs_calib_data.status_flags & ADC_CALIB_ERR_VREF_CAL_INVALID) != 0UL)
-    {
-        /* ROM 标定码损坏，无法进行科学自校准，强退回安全默认电压 */
-        vref_new = gs_config.default_vref;
-    }
-    else
-    {
-        /* 从只读 ROM 中安全读取标定码并实施浮点强转 */
-        const uint16_t vrefint_cal = ADC_CALIB_READ_ROM16(ADC_CALIB_VREFINT_CAL_ADDR);
-        
-        /* 核心等比例换算公式：Vref_plus = VREFINT_CAL_V * (VREFINT_CAL / vrefint_raw) */
-        vref_new = ADC_CALIB_VREFINT_CAL_V * ((float)vrefint_cal / (float)vrefint_raw);
-        
-        /* 物理阈值防御性保护 (防突发性瞬态剧烈噪声) */
-        if (vref_new > gs_config.vref_max_limit)
-        {
-            vref_new = gs_config.vref_max_limit;
-            gs_calib_data.status_flags |= ADC_CALIB_WARN_VREF_LIMIT;
-        }
-        else if (vref_new < gs_config.vref_min_limit)
-        {
-            vref_new = gs_config.vref_min_limit;
-            gs_calib_data.status_flags |= ADC_CALIB_WARN_VREF_LIMIT;
-        }
-        else
-        {
-            /* 正常区间 */
-        }
-    }
-
-    gs_calib_data.vref_inst = vref_new;
-
-    /* ==========================================
-     * 阶段二：基准电压 EMA 指数平滑滤波
-     * ========================================== */
-    /* 
-     * 冷启动特判保护机制：
-     * 为避免首次上电时 EMA 平滑滤波需要长时间爬升，
-     * 当处于初装或 vref_ema 接近默认零电平时，直接强制同步第一周期数值。
-     */
-    if (gs_calib_data.vref_ema <= 0.1f)
-    {
-        gs_calib_data.vref_ema = vref_new;
-    }
-    else
-    {
-        /* 核心 EMA 滤波公式：VREF_EMA = α * VREF_new + (1 - α) * VREF_EMA_old */
-        gs_calib_data.vref_ema = (gs_config.alpha * vref_new) + 
-                                 ((1.0f - gs_config.alpha) * gs_calib_data.vref_ema);
-    }
+    gs_calib_data.vref_inst = ADC_CALIB_FIXED_VREF_V;
+    gs_calib_data.vref_ema  = ADC_CALIB_FIXED_VREF_V;
 
     /* ==========================================
      * 阶段四：片上温度传感器 3.0V 标准等效校准与双点插值
