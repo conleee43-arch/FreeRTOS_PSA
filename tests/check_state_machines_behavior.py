@@ -330,6 +330,57 @@ class CalcControlModel:
         return output
 
 
+VOC_RAMP_STEP_V = 0.0025
+VOC_RAMP_INTERVAL_MS = 5
+VOC_MAX_V = 2.5
+VOC_MIN_V = 0.0
+
+
+def calc_control_is_voc_force_active(state):
+    return state in (
+        CalcState.SET_3A,
+        CalcState.WAIT_3A_STABLE,
+        CalcState.LATCH_3A,
+        CalcState.SET_2A,
+        CalcState.WAIT_2A_STABLE,
+        CalcState.LATCH_2A,
+        CalcState.CALC_RESISTANCE,
+    )
+
+
+class VocRampModel:
+    def __init__(self):
+        self.target_voltage_v = 0.0
+        self.last_ramp_tick = 0
+
+    def update(self, tick_ms, calc_state, protection_state, pw_level):
+        if calc_control_is_voc_force_active(calc_state):
+            self.target_voltage_v = VOC_MAX_V
+            self.last_ramp_tick = tick_ms
+            return self.target_voltage_v
+
+        if protection_state != ProtectionState.NORMAL:
+            self.target_voltage_v = VOC_MIN_V
+            self.last_ramp_tick = tick_ms
+            return self.target_voltage_v
+
+        if calc_state in (CalcState.WAIT_SAFE, CalcState.MONITOR):
+            if tick_ms - self.last_ramp_tick >= VOC_RAMP_INTERVAL_MS:
+                if pw_level:
+                    self.target_voltage_v += VOC_RAMP_STEP_V
+                else:
+                    self.target_voltage_v -= VOC_RAMP_STEP_V
+
+                if self.target_voltage_v > VOC_MAX_V:
+                    self.target_voltage_v = VOC_MAX_V
+                if self.target_voltage_v < VOC_MIN_V:
+                    self.target_voltage_v = VOC_MIN_V
+
+                self.last_ramp_tick = tick_ms
+
+        return self.target_voltage_v
+
+
 LINE_LIMIT_STATUS_OK = 0
 LINE_LIMIT_STATUS_NEED_RETEST = 1
 LINE_LIMIT_STATUS_INVALID_ARG = 2
@@ -754,6 +805,58 @@ def check_calc_control_behavior():
     assert_equal(out["dac_code"], 3088, "Idc below 15A full-scale stays in linear DAC range")
 
 
+def check_voc_ramp_behavior():
+    print(">>> 正在执行 VOC 与 PW 联动斜坡控制校验...")
+
+    # 1. 闲置模式下，PW 高电平每 5ms 上升 2.5mV
+    model = VocRampModel()
+    out_v = model.update(0, CalcState.WAIT_SAFE, ProtectionState.NORMAL, True)
+    assert_close(out_v, 0.0, "idle ramp holds at 0V before first 5ms slot")
+    out_v = model.update(5, CalcState.WAIT_SAFE, ProtectionState.NORMAL, True)
+    assert_close(out_v, 0.0025, "idle ramp increases 2.5mV every 5ms on PW high")
+    out_v = model.update(10, CalcState.WAIT_SAFE, ProtectionState.NORMAL, True)
+    assert_close(out_v, 0.0050, "idle ramp accumulates on later 5ms slots")
+
+    # 2. 闲置模式下，PW 低电平每 5ms 下降 2.5mV
+    model.target_voltage_v = 0.0100
+    model.last_ramp_tick = 10
+    out_v = model.update(15, CalcState.MONITOR, ProtectionState.NORMAL, False)
+    assert_close(out_v, 0.0075, "monitor ramp decreases 2.5mV every 5ms on PW low")
+    out_v = model.update(20, CalcState.MONITOR, ProtectionState.NORMAL, False)
+    assert_close(out_v, 0.0050, "monitor ramp continues decreasing from current voltage")
+
+    # 3. 九段测量期间强制拉满 2.5V，并在整个接管窗口内屏蔽 PW
+    model = VocRampModel()
+    model.target_voltage_v = 0.2500
+    out_v = model.update(100, CalcState.SET_3A, ProtectionState.NORMAL, False)
+    assert_close(out_v, 2.5, "SET_3A immediately forces VOC full scale")
+    out_v = model.update(105, CalcState.WAIT_3A_STABLE, ProtectionState.NORMAL, False)
+    assert_close(out_v, 2.5, "WAIT_3A_STABLE keeps VOC forced high")
+    out_v = model.update(110, CalcState.CALC_RESISTANCE, ProtectionState.NORMAL, False)
+    assert_close(out_v, 2.5, "CALC_RESISTANCE still keeps VOC forced high")
+
+    # 4. 进入 MONITOR 后释放接管，恢复 PW 斜坡逻辑
+    out_v = model.update(115, CalcState.MONITOR, ProtectionState.NORMAL, False)
+    assert_close(out_v, 2.4975, "MONITOR releases force-hold and resumes 5ms ramp from current voltage")
+
+    # 5. 保护异常时，无论此前状态如何都应回 0V
+    model.target_voltage_v = 1.5000
+    out_v = model.update(200, CalcState.MONITOR, ProtectionState.TRIPPED, True)
+    assert_close(out_v, 0.0, "protection fault forces VOC back to 0V")
+
+    # 6. 斜坡必须做上下限钳位
+    model.target_voltage_v = 2.4990
+    model.last_ramp_tick = 200
+    out_v = model.update(205, CalcState.WAIT_SAFE, ProtectionState.NORMAL, True)
+    assert_close(out_v, 2.5, "ramp upper bound clamps to 2.5V")
+    model.target_voltage_v = 0.0010
+    model.last_ramp_tick = 205
+    out_v = model.update(210, CalcState.WAIT_SAFE, ProtectionState.NORMAL, False)
+    assert_close(out_v, 0.0, "ramp lower bound clamps to 0V")
+
+    print("    VOC 与 PW 联动斜坡控制校验通过。")
+
+
 def check_pause_resume_2a_behavior():
     print(">>> 正在执行 2A 等待挂起/恢复功能校验...")
 
@@ -1004,6 +1107,7 @@ def main():
     try:
         check_output_protection_behavior()
         check_calc_control_behavior()
+        check_voc_ramp_behavior()
         check_pause_resume_2a_behavior()
         check_calc_line_limit_integration()
         check_line_limit_behavior()

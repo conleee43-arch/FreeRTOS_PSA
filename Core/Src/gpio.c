@@ -22,6 +22,25 @@
 #include "gpio.h"
 
 /* USER CODE BEGIN 0 */
+static volatile uint8_t s_pw_level = 0U;
+static volatile uint8_t s_pw_initialized = 0U;
+
+void PW_Input_InitShadow(void)
+{
+  GPIO_PinState pin_state = HAL_GPIO_ReadPin(EXTI_PB0_GPIO_Port, EXTI_PB0_Pin);
+  s_pw_level = (pin_state == GPIO_PIN_SET) ? 1U : 0U;
+  s_pw_initialized = 1U;
+}
+
+uint8_t PW_Input_GetLevel(void)
+{
+  if (s_pw_initialized == 0U)
+  {
+    PW_Input_InitShadow();
+  }
+
+  return s_pw_level;
+}
 
 /* USER CODE END 0 */
 
@@ -61,7 +80,7 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin : PB0 */
   GPIO_InitStruct.Pin = EXTI_PB0_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;						//PSA板单独测试需要上拉，其他添加需要修改为NOPULL
   HAL_GPIO_Init(EXTI_PB0_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
@@ -77,8 +96,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   {
     /* 当有触发信号后进入该回调函数中读取引脚状态 */
     GPIO_PinState pin_state = HAL_GPIO_ReadPin(EXTI_PB0_GPIO_Port, EXTI_PB0_Pin);
-    
-    (void)pin_state; // 防编译器未使用变量警告
+    s_pw_level = (pin_state == GPIO_PIN_SET) ? 1U : 0U;
+    s_pw_initialized = 1U;
   }
 }
 /* USER CODE END 2 */

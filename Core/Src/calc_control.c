@@ -399,6 +399,26 @@ uint8_t Calc_Control_IsClosedLoopActive(void)
     return s_ioc_valid;
 }
 
+uint8_t Calc_Control_IsVocForceActive(void)
+{
+    switch (s_state)
+    {
+        case CALC_CONTROL_SET_3A:
+        case CALC_CONTROL_WAIT_3A_STABLE:
+        case CALC_CONTROL_LATCH_3A:
+        case CALC_CONTROL_SET_2A:
+        case CALC_CONTROL_WAIT_2A_STABLE:
+        case CALC_CONTROL_LATCH_2A:
+        case CALC_CONTROL_CALC_RESISTANCE:
+            return 1U;
+
+        case CALC_CONTROL_WAIT_SAFE:
+        case CALC_CONTROL_MONITOR:
+        default:
+            return 0U;
+    }
+}
+
 uint8_t Calc_Control_PauseWait2A(uint32_t tick_ms)
 {
     taskENTER_CRITICAL();

@@ -21,6 +21,7 @@
 | [LOGIC_line-limit.md](LOGIC_line-limit.md#logic-line-limit) | 交流线阻闭环限功率与安全链校验的5阶段逻辑、计算常数、通道统计、折算公式和状态机联动。 | 串口 DMA 数据搬移细节、GPIO 初始化。 | 修改限功率保护常数、微调功率折算算法或调整单双通道硬件能力上限时 |
 | [LOGIC_output-protection.md](LOGIC_output-protection.md#logic-output-protection) | 过温/过压/过流保护状态机状态转移图、跳闸迟滞计算、2秒观察期自恢复纯逻辑。 | 具体引脚配置代码、中断配置。 | 开发与验证最高优先级过温、过压、过流保护状态机逻辑时 |
 | [LOGIC_calc-control.md](LOGIC_calc-control.md#logic-calc-control) | 内阻计算纯状态机（WAIT_SAFE 至 MONITOR 九段设计）、R=(U1-U2)/(I1-I2) 滤波求解数学公式。 | 串口 DMA 数据搬移细节、GPIO 初始化。 | 开发与验证内阻九段测量状态机计算逻辑时 |
+| [LOGIC_pw-voc.md](LOGIC_pw-voc.md#logic-pw-voc) | PW (PB0) 与 VOC (PA5) 协作控制逻辑、三级优先级控制策略及斜坡跟随算法设计。 | 底层 ADC 物理量化公式、串口报文格式。 | 修改 PW / VOC 控制逻辑、调节步长、或优先级策略时 |
 | [plans/2026-06-03-calc-3a-stability-plan.md](plans/2026-06-03-calc-3a-stability-plan.md#calc-3a-stability-plan) | 已确认的 3A 动态判稳实施计划，覆盖测试顺序、受影响文件与回归命令。 | 任何新的架构真理、硬件常数定义或替代 `LOGIC_calc-control.md` 的行为规范。 | 执行本次 3A 动态判稳修正前，用于按步骤实施时 |
 | [plans/2026-06-19-ac-line-limit-implementation-plan.md](plans/2026-06-19-ac-line-limit-implementation-plan.md#ac-line-limit-implementation-plan) | 基于交流线路等效线阻动态限制系统充电功率的实现文档，包含问题描述、实施过程、测试顺序与验收标准。 | 替代 `LOGIC_calc-control.md` 的状态机真理定义、未确认的硬件规格变更。 | 执行交流线阻闭环限功率开发前，用于按步骤实施时 |
 | [plans/2026-06-19-ac-line-limit-bringup-checklist.md](plans/2026-06-19-ac-line-limit-bringup-checklist.md#ac-line-limit-bringup-checklist) | 交流线阻闭环限功率上板联调检查单，覆盖示波观察点、串口状态帧顺序、期望波形与 VIN1/VIN2/VOC/IOC 参数记录要求。 | 替代接口协议真理、未确认的硬件改线结论、脱离现有命名体系的新字段定义。 | 进行上板联调、工装验收或现场故障复盘前，用于逐项核对时 |
@@ -44,6 +45,7 @@
 | **输出保护状态机开发与验证** | `AGENTS.md` + [GUIDE_developer.md](GUIDE_developer.md#guide-developer) + [LOGIC_output-protection.md](LOGIC_output-protection.md#logic-output-protection) | 规范保护状态机的跳转逻辑、时效判定、断开次序和回归测试规范。 |
 | **内阻计算状态机开发与验证** | `AGENTS.md` + [GUIDE_developer.md](GUIDE_developer.md#guide-developer) + [LOGIC_calc-control.md](LOGIC_calc-control.md#logic-calc-control) | 规范九步计算状态机的时序图、阶跃电流DAC控制与电阻公式解算机制。 |
 | **交流线阻限功率算法开发与验证** | `AGENTS.md` + [GUIDE_developer.md](GUIDE_developer.md#guide-developer) + [LOGIC_line-limit.md](LOGIC_line-limit.md#logic-line-limit) | 规范线阻闭环限功率与安全链校验的计算逻辑与参数阈值。 |
+| **PW 与 VOC 协作控制开发与验证** | `AGENTS.md` + [GUIDE_developer.md](GUIDE_developer.md#guide-developer) + [LOGIC_pw-voc.md](LOGIC_pw-voc.md#logic-pw-voc) + [LOGIC_calc-control.md](LOGIC_calc-control.md#logic-calc-control) | 规范三级优先级控制机制及斜坡跟随自校准算法。 |
 
 ---
 

@@ -39,6 +39,8 @@ extern "C" {
 void MX_GPIO_Init(void);
 
 /* USER CODE BEGIN Prototypes */
+void PW_Input_InitShadow(void);
+uint8_t PW_Input_GetLevel(void);
 
 /* USER CODE END Prototypes */
 

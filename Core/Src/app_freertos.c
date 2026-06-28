@@ -35,6 +35,7 @@
 #include "output_control.h"
 #include "output_protection.h"
 #include "calc_control.h"
+#include "gpio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -59,6 +60,10 @@ typedef struct {
 #define CALC_CONTROL_RESET_FLAG     0x00000001U
 #define UART_BACKLOG_RETRY_MAX      20U
 #define UART_BACKLOG_BACKOFF_MS     20U
+#define VOC_RAMP_STEP_V             0.0025f
+#define VOC_RAMP_INTERVAL_MS        5U
+#define VOC_MAX_V                   2.5f
+#define VOC_MIN_V                   0.0f
 
 /* USER CODE END PD */
 
@@ -112,6 +117,8 @@ static uint8_t g_usart1_rx_dma_buf[USART1_RX_DMA_BUF_SIZE];
 static uint8_t g_usart1_rx_main_buf[USART1_RX_MAIN_BUF_SIZE];
 static volatile uint8_t s_pause_state_ack_pending = 0U;
 static volatile uint8_t s_resume_state_ack_pending = 0U;
+static float s_voc_target_voltage_v = 0.0f;
+static uint32_t s_voc_last_ramp_tick = 0U;
 
 void StartSampleFilterTask(void *argument);
 void StartEmergencyTask(void *argument);
@@ -319,12 +326,59 @@ void StartSampleFilterTask(void *argument)
       Error_Handler();
   }
 
+  PW_Input_InitShadow();
+  s_voc_target_voltage_v = 0.0f;
+  s_voc_last_ramp_tick = 0U;
+
   for(;;)
   {
     uint32_t current_tick = osKernelGetTickCount();
 
     /* 高频采样与滑动平均滤波 */
     Measure_Update();
+
+    if (Calc_Control_IsVocForceActive() != 0U)
+    {
+        s_voc_target_voltage_v = VOC_MAX_V;
+        DAC_Control_SetVocVoltage(VOC_MAX_V);
+        s_voc_last_ramp_tick = current_tick;
+    }
+    else if (Output_Protection_GetState() != OUTPUT_PROTECTION_NORMAL)
+    {
+        s_voc_target_voltage_v = VOC_MIN_V;
+        DAC_Control_SetVocVoltage(VOC_MIN_V);
+        s_voc_last_ramp_tick = current_tick;
+    }
+    else
+    {
+        Calc_Control_State_t voc_calc_state = Calc_Control_GetState();
+
+        if (((voc_calc_state == CALC_CONTROL_WAIT_SAFE) ||
+             (voc_calc_state == CALC_CONTROL_MONITOR)) &&
+            ((current_tick - s_voc_last_ramp_tick) >= VOC_RAMP_INTERVAL_MS))
+        {
+            if (PW_Input_GetLevel() != 0U)
+            {
+                s_voc_target_voltage_v += VOC_RAMP_STEP_V;
+            }
+            else
+            {
+                s_voc_target_voltage_v -= VOC_RAMP_STEP_V;
+            }
+
+            if (s_voc_target_voltage_v > VOC_MAX_V)
+            {
+                s_voc_target_voltage_v = VOC_MAX_V;
+            }
+            else if (s_voc_target_voltage_v < VOC_MIN_V)
+            {
+                s_voc_target_voltage_v = VOC_MIN_V;
+            }
+
+            DAC_Control_SetVocVoltage(s_voc_target_voltage_v);
+            s_voc_last_ramp_tick = current_tick;
+        }
+    }
 
     /* 每隔 1000ms 将数据投递到串口队列中发送 */
     if ((current_tick - print_tick) >= 1000U)

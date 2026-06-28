@@ -83,6 +83,7 @@ void Calc_Control_Init(void);
 void Calc_Control_Update(const Calc_Control_Input_t *input, Calc_Control_Output_t *output);
 Calc_Control_State_t Calc_Control_GetState(void);
 uint8_t Calc_Control_IsClosedLoopActive(void);
+uint8_t Calc_Control_IsVocForceActive(void);
 
 /* 2A 等待挂起/恢复 API */
 /**

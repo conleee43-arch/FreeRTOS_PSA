@@ -159,11 +159,25 @@ foreach ($needle in @(
     'strstr(cmd_buf, "DebugResume2A")',
     'Calc_Control_ResumeWait2A',
     'Calc_Control_IsWait2APaused',
-    'WAIT_2A_PAUSED'
+    'WAIT_2A_PAUSED',
+    'PW_Input_InitShadow()',
+    'PW_Input_GetLevel()',
+    'Calc_Control_IsVocForceActive()',
+    'VOC_RAMP_STEP_V',
+    'VOC_RAMP_INTERVAL_MS',
+    'static float s_voc_target_voltage_v = 0.0f;',
+    'static uint32_t s_voc_last_ramp_tick = 0U;',
+    'DAC_Control_SetVocVoltage(VOC_MAX_V)',
+    'DAC_Control_SetVocVoltage(VOC_MIN_V)'
 )) {
     if (-not $firmware.Contains($needle)) {
         throw "Firmware UART control path is missing expected implementation: $needle"
     }
+}
+
+$vocRampPattern = 'void StartSampleFilterTask\(void \*argument\)[\s\S]*?Measure_Update\(\);[\s\S]*?Calc_Control_IsVocForceActive\(\)[\s\S]*?PW_Input_GetLevel\(\)[\s\S]*?DAC_Control_SetVocVoltage'
+if (-not [regex]::IsMatch($firmware, $vocRampPattern)) {
+    throw 'VOC ramp control must run inside StartSampleFilterTask after Measure_Update() and drive DAC through DAC_Control_SetVocVoltage().'
 }
 
 foreach ($needle in @(

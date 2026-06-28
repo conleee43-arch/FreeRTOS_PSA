@@ -134,10 +134,6 @@
         </SetRegEntry>
         <SetRegEntry>
           <Number>0</Number>
-          <Key>DLGUARM</Key>
-        </SetRegEntry>
-        <SetRegEntry>
-          <Number>0</Number>
           <Key>UL2CM3</Key>
           <Name>UL2CM3(-S0 -C0 -P0 )  -FN1 -FC8000 -FD20000000 -FF0STM32G43x-4x_128 -FL020000 -FS08000000 -FP0($$Device:STM32G431KBTx$CMSIS\Flash\STM32G43x-4x_128.FLM)</Name>
         </SetRegEntry>
