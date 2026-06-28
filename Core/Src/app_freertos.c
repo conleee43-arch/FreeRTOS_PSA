@@ -98,6 +98,7 @@ const osThreadAttr_t uartTask_attributes = {
   .stack_size = 512 * 4
 };
 
+
 /* 串口消息队列句柄 */
 osMessageQueueId_t uartMsgQueueHandle;
 
@@ -116,6 +117,7 @@ void StartSampleFilterTask(void *argument);
 void StartEmergencyTask(void *argument);
 void StartCalcControlTask(void *argument);
 void StartUartTask(void *argument);
+
 static void UartQueue_PostBytes(UartMsgType_t type, const uint8_t *data, uint16_t len);
 static void PostCalcStateLine(const char *state_str);
 
@@ -309,6 +311,7 @@ void StartSampleFilterTask(void *argument)
   static uint32_t print_tick = 0;
 
   DAC_Control_Start(0U);
+  DAC_Control_StartVOC(0U);
 
   HAL_StatusTypeDef init_res = Measure_Init(&hadc1);
   if (init_res != HAL_OK)

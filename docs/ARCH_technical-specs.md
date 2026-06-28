@@ -45,12 +45,12 @@ void SystemClock_Config(void)
 
 ---
 
-## 2. 内部基准电压源配置 (VREFBUF SCALE1)
+## 2. 外部基准电压源与 VREFBUF 禁用配置
 
-为防范供电网络噪声对 ADC 模拟信号输入造成干扰，芯片开启了内部集成的高精密基准电压缓冲器 (VREFBUF)，将其配置为 `SCALE1` (2.5V 物理参考电压基准)，并直接在 `VREF+` 引脚上物理输出。此特性对于保证模数转换的高一致性至关重要。
+在当前 STM32G431KB (32-pin) 硬件平台上，板级模拟参考基准不再由 MCU 内部 `VREFBUF` 驱动，而是由**外部精密且稳定的 2.5V 电源直供 VDDA/VREF+ 极**。为确保测量精确性且避免与外部供电冲突，固件中的内部集成基准电压缓冲器 (VREFBUF) 必须在初始化及运行期间保持**完全禁用（Disabled）**。
 
 ### 2.1 硬件自检与断言点
-项目采用自动化脚本 [../tests/check_adc_config.ps1](../tests/check_adc_config.ps1) 强制要求固件使能 VREFBUF 硬件并防止被 CubeMX 意外覆写。
+项目采用自动化测试脚本 [../tests/check_adc_config.ps1](../tests/check_adc_config.ps1) 强制校验初始化代码，确保 `VREFBUF` 的电压倍增和输出功能被显式禁用且未配置，防止 CubeMX 生成代码意外将其重开。
 
 ---
 
@@ -60,7 +60,7 @@ void SystemClock_Config(void)
 
 | 硬件外设 | 触发事件 | DMA 资源 | 传输宽度 | 传输模式 | 硬件优先级 |
 |---|---|---|---|---|---|
-| **ADC1** | 多通道扫描就绪 | DMA1 Channel 3 | 16-bit (HalfWord) | Circular (循环乒乓) | Low (`DMA_PRIORITY_LOW`) |
+| **ADC1** | 5通道规则扫描就绪 | DMA1 Channel 3 | 16-bit (HalfWord) | Circular (循环乒乓) | Low (`DMA_PRIORITY_LOW`) |
 | **USART1_RX** | 触发 Idle 空闲中断 | DMA1 Channel 1 | 8-bit (Byte) | Normal (不定长自愈) | Low (`DMA_PRIORITY_LOW`) |
 | **USART1_TX** | 缓冲区发送为空 | DMA1 Channel 2 | 8-bit (Byte) | Normal (非阻塞链式) | Low (`DMA_PRIORITY_LOW`) |
 
@@ -93,12 +93,29 @@ void SystemClock_Config(void)
 
 ## 5. 扩展物理通道与 GPIO 控制资源
 
-为支持闭环 PFC 目标电流调节及保护机制，固件在硬件层配置了以下扩展资源：
+为支持闭环 PFC 目标电流调节、模拟电压输出控制及保护机制，固件在硬件层配置了以下扩展资源：
 
 | 外设/引脚 | 物理引脚 | 配置模式 | 作用与功能 |
 |---|---|---|---|
 | **DAC1_OUT1** | PA4 | Analog (模拟模式) | 闭环 PFC 目标反馈电流输出 (0.00 ~ 10.00A) |
-| **OF_EN** | PB0 | Output PP (推挽输出) | 过流保护硬件使能控制信号 (使能: 1 / 禁用: 0) |
+| **DAC1_OUT2** | PA5 | Analog (模拟模式) | VOC 模拟信号输出控制 (0.0V ~ 2.5V) |
+| **OF_EN** | PA6 | Output PP (推挽输出) | 过流保护硬件使能控制信号 (使能: 1 / 禁用: 0) |
+| **EXTI_PB0** | PB0 | EXTI 双边沿 (输入上拉) | 外部边沿触发中断信号，在 `HAL_GPIO_EXTI_Callback` 回调中读取电平状态 |
+
+### 5.1 DAC 控制接口 (PA4 / PA5)
+
+模拟控制信号输出由 `dac_control.c` 提供统一的应用层管理接口，具体 API 接口定义如下：
+
+* **IOC 通道 (PA4 - DAC1_OUT1)**:
+  * `void DAC_Control_Start(uint32_t initial_value)`：启动通道 1 并写入初始数字量。
+  * `void DAC_Control_Stop(void)`：停止通道 1 输出。
+  * `void DAC_Control_SetValue(uint32_t value)`：直接设置 12 位寄存器原始数字量 (0 ~ 4095)。
+  * `void DAC_Control_SetPfcCurrent(float current_A)`：根据目标电流物理值换算输出。
+* **VOC 通道 (PA5 - DAC1_OUT2)**:
+  * `void DAC_Control_VocStart(uint32_t initial_value)`：启动通道 2 并写入初始数字量。
+  * `void DAC_Control_VocStop(void)`：停止通道 2 输出。
+  * `void DAC_Control_VocSetValue(uint32_t value)`：直接设置 12 位寄存器原始数字量 (0 ~ 4095)。
+  * `void DAC_Control_SetVocVoltage(float voltage_V)`：根据目标物理电压（0.0V ~ 2.5V）以系数 `DAC_VOLTAGE_FACTOR`（1638.0）换算后输出。
 
 ---
 

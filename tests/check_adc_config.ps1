@@ -114,8 +114,8 @@ Assert-Contains 'Core\Inc\main.h' `
     'IOC PA4 pin define is missing.'
 
 Assert-Contains 'Core\Inc\main.h' `
-    '#define OF_EN_Pin      GPIO_PIN_0' `
-    'OF_EN PB0 pin define is missing.'
+    '#define OF_EN_Pin      GPIO_PIN_6' `
+    'OF_EN PA6 pin define is missing.'
 
 Assert-Contains 'Core\Src\main.c' `
     'MX_DAC1_Init();' `

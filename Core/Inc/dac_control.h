@@ -45,6 +45,9 @@ extern "C" {
 /* 最大限制值 (12位DAC最大值 4095) */
 #define DAC_MAX_DIGITAL_VALUE       4095U
 
+/* VOC 模拟输出电压转换因子：DAC数字值 = 输出电压(V) * (4095 / 2.5) */
+#define DAC_VOLTAGE_FACTOR          1638.0f
+
 /* Exported functions prototypes ---------------------------------------------*/
 
 /**
@@ -68,6 +71,26 @@ void DAC_Control_Stop(void);
 void DAC_Control_SetValue(uint32_t value);
 
 /**
+  * @brief 启动 DAC1 Channel 2 并设置 VOC 初始输出值
+  * @param initial_value: 12位右对齐初始DAC数字值 (0 ~ 4095)
+  * @retval None
+  */
+void DAC_Control_StartVOC(uint32_t initial_value);
+
+/**
+  * @brief 停止 DAC1 Channel 2 的输出
+  * @retval None
+  */
+void DAC_Control_StopVOC(void);
+
+/**
+  * @brief 直接通过 12 位数字值设置 DAC1 Channel 2 输出
+  * @param value: 12位右对齐数字值 (0 ~ 4095)
+  * @retval None
+  */
+void DAC_Control_SetVOCValue(uint32_t value);
+
+/**
   * @brief 通过目标 PFC 电流 (安培) 来设置 DAC 输出电压
   * @param current_A: 目标PFC电流值，单位为安培 (A)
   * @retval None
@@ -86,6 +109,12 @@ float DAC_Control_GetPfcTargetCurrent(void);
   * @retval None
   */
 void DAC_Control_UpdatePfcTargetCurrent(float current_A);
+
+/* VOC (PA5) 控制相关函数原型 */
+void DAC_Control_VocStart(uint32_t initial_value);
+void DAC_Control_VocStop(void);
+void DAC_Control_VocSetValue(uint32_t value);
+void DAC_Control_SetVocVoltage(float voltage_V);
 
 #ifdef __cplusplus
 }

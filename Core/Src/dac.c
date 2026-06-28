@@ -64,6 +64,12 @@ void MX_DAC1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN DAC1_Init 2 */
+  /** DAC channel OUT2 config
+  */
+  if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /* USER CODE END DAC1_Init 2 */
 
@@ -91,6 +97,10 @@ void HAL_DAC_MspInit(DAC_HandleTypeDef* dacHandle)
     HAL_GPIO_Init(IOC_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN DAC1_MspInit 1 */
+    GPIO_InitStruct.Pin = VOC_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(VOC_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE END DAC1_MspInit 1 */
   }
@@ -113,6 +123,7 @@ void HAL_DAC_MspDeInit(DAC_HandleTypeDef* dacHandle)
     HAL_GPIO_DeInit(IOC_GPIO_Port, IOC_Pin);
 
   /* USER CODE BEGIN DAC1_MspDeInit 1 */
+    HAL_GPIO_DeInit(VOC_GPIO_Port, VOC_Pin);
 
   /* USER CODE END DAC1_MspDeInit 1 */
   }

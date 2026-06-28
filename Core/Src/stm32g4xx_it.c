@@ -239,4 +239,9 @@ void USART1_IRQHandler(void)
 {
   HAL_UART_IRQHandler(&huart1);
 }
+
+void EXTI0_IRQHandler(void)
+{
+  HAL_GPIO_EXTI_IRQHandler(EXTI_PB0_Pin);
+}
 /* USER CODE END 1 */

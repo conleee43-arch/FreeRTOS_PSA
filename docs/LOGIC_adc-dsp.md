@@ -59,28 +59,23 @@ static float Filter_AdaptiveMedian(Median_Filter_t *p_filt, uint16_t new_val)
 
 ---
 
-## 2. 动态基准自校准与 EMA 指数滤波算法
+## 2. 外部供电基准与自校准计算降级处理
 
-在 MCU 运行时，其模拟供电基准电源 $V_{REF+}$ 会因电网波动和负载开关发生瞬态跳变，直接导致传统的固定基准电压转换公式完全失效。
+在当前 STM32G431KB 硬件平台下，ADC 参考基准已切换为外部精密稳定的 2.5V 电源直供，并且在 CubeMX/C 固件层面移除了对内部 `VREFINT` 通道的扫描与采样。
 
-### 2.1 瞬时 $V_{REF+}$ 逆向解算
-通过采集内部精准的、出厂已烧录标定参数的内部基准电压源通道 ($V_{REFINT}$)，逆向求出实时真实的供电电压 $V_{REF+}$。解算公式如下：
+### 2.1 静态工作基准配置与 EMA 降级
+由于不再对 `VREFINT` 进行动态采集，原有的 `VREFINT` 逆向解算和动态 EMA 滤波已被**完全停用**。在 `adc_calib.c` 驱动层，`vref_inst` 和 `vref_ema` 被直接强制赋值为固定的外部参考常量 `2.5V`：
 
-$$V_{REF+, inst} = V_{REFINT, CAL\_V} \times \frac{V_{REFINT, CAL\_CODE}}{V_{REFINT, RAW}}$$
-
-```c
-vref_new = ADC_CALIB_VREFINT_CAL_V * ((float)vrefint_cal / (float)vrefint_raw);
-```
-
-### 2.2 EMA 指数平滑滤波
-为隔绝高频突发噪声，利用 EMA (Exponential Moving Average) 滤波算法对瞬时计算的供电基准进行指数级平滑，平滑系数 $\alpha$ 设定为 `0.05f`：
-
-$$V_{REF+, EMA} = \alpha \times V_{REF+, inst} + (1 - \alpha) \times V_{REF+, EMA\_prev}$$
+$$V_{REF+, inst} = 2.5\text{V}$$
+$$V_{REF+, EMA} = 2.5\text{V}$$
 
 ```c
-gs_calib_data.vref_ema = (gs_config.alpha * vref_new) + 
-                         ((1.0f - gs_config.alpha) * gs_calib_data.vref_ema);
+gs_calib_data.vref_inst = ADC_CALIB_FIXED_VREF_V; // 2.5f
+gs_calib_data.vref_ema  = ADC_CALIB_FIXED_VREF_V; // 2.5f
 ```
+
+### 2.2 兼容性解算保留
+为保持测量解算框架和上位机/诊断协议格式的不变性，温度传感器的 3.0V 等效标定（下文 3.1 节）和常规测量通道 of 二阶解算链路（下文 4.1 节）依然保留了带入 `vref_ema` 进行增益补偿的公式计算。因为 `vref_ema` 恒为 `2.5V`，这些运算等效为带入静态 2.5V 基准进行恒定折算，不仅消除了动态除法开销，也确保了对已有软硬件接口规范的完全兼容。
 
 ---
 

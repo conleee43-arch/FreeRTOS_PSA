@@ -62,8 +62,48 @@ void DAC_Control_SetValue(uint32_t value)
     {
         value = DAC_MAX_DIGITAL_VALUE;
     }
-    
+
     HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, value);
+}
+
+/**
+  * @brief 启动 DAC1 Channel 2 并设置 VOC 初始输出值
+  * @param initial_value: 12位右对齐初始DAC数字值 (0 ~ 4095)
+  * @retval None
+  */
+void DAC_Control_StartVOC(uint32_t initial_value)
+{
+    if (initial_value > DAC_MAX_DIGITAL_VALUE)
+    {
+        initial_value = DAC_MAX_DIGITAL_VALUE;
+    }
+
+    HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, initial_value);
+    HAL_DAC_Start(&hdac1, DAC_CHANNEL_2);
+}
+
+/**
+  * @brief 停止 DAC1 Channel 2 的输出
+  * @retval None
+  */
+void DAC_Control_StopVOC(void)
+{
+    HAL_DAC_Stop(&hdac1, DAC_CHANNEL_2);
+}
+
+/**
+  * @brief 直接通过 12 位数字值设置 DAC1 Channel 2 输出
+  * @param value: 12位右对齐数字值 (0 ~ 4095)
+  * @retval None
+  */
+void DAC_Control_SetVOCValue(uint32_t value)
+{
+    if (value > DAC_MAX_DIGITAL_VALUE)
+    {
+        value = DAC_MAX_DIGITAL_VALUE;
+    }
+
+    HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, value);
 }
 
 static float s_pfc_target_current = 4.00f;
@@ -118,3 +158,65 @@ void DAC_Control_UpdatePfcTargetCurrent(float current_A)
     }
     s_pfc_target_current = current_A;
 }
+
+/**
+  * @brief 启动 DAC1 Channel 2 (VOC) 并设置初始输出值
+  * @param initial_value: 12位右对齐初始DAC数字值 (0 ~ 4095)
+  * @retval None
+  */
+void DAC_Control_VocStart(uint32_t initial_value)
+{
+    if (initial_value > DAC_MAX_DIGITAL_VALUE)
+    {
+        initial_value = DAC_MAX_DIGITAL_VALUE;
+    }
+    
+    /* 1. 设置通道2初始输出数据 */
+    HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, initial_value);
+    
+    /* 2. 开启 DAC1 的通道 2 */
+    HAL_DAC_Start(&hdac1, DAC_CHANNEL_2);
+}
+
+/**
+  * @brief 停止 DAC1 Channel 2 (VOC) 的输出
+  * @retval None
+  */
+void DAC_Control_VocStop(void)
+{
+    HAL_DAC_Stop(&hdac1, DAC_CHANNEL_2);
+}
+
+/**
+  * @brief 直接通过 12 位数字值设置 DAC1 Channel 2 (VOC) 输出
+  * @param value: 12位右对齐数字值 (0 ~ 4095)
+  * @retval None
+  */
+void DAC_Control_VocSetValue(uint32_t value)
+{
+    if (value > DAC_MAX_DIGITAL_VALUE)
+    {
+        value = DAC_MAX_DIGITAL_VALUE;
+    }
+    
+    HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, value);
+}
+
+/**
+  * @brief 通过目标电压来设置 DAC 通道 2 (VOC) 输出电压
+  * @param voltage_V: 目标电压值，单位为伏特 (V)
+  * @retval None
+  */
+void DAC_Control_SetVocVoltage(float voltage_V)
+{
+    if (voltage_V < 0.0f)
+    {
+        voltage_V = 0.0f;
+    }
+    
+    float val_f = (voltage_V * DAC_VOLTAGE_FACTOR) + 0.5f;
+    uint32_t val_u = (uint32_t)val_f;
+    
+    DAC_Control_VocSetValue(val_u);
+}
+
