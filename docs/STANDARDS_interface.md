@@ -88,9 +88,9 @@ SetOF:1\r\n
 SetOF:0\r\n
 ```
 
-`SetOF:1` 与 `SetDAC` 使用相同安全门控：测量未就绪、保护状态非 `NORMAL` 或输出控制层拒绝时，固件回送 `[State] STATE:CONTROL_REJECTED` 且不会拉高 `OF_EN`。
+`SetOF:1` 与 `SetDAC` 使用相同安全门控：测量未就绪、保护状态非 `NORMAL` 或输出控制层拒绝时，固件回送 `[State] STATE:CONTROL_REJECTED` 且不会拉低 `OF_EN`。
 
-`SetOF:0` 是安全关断命令，允许在任意状态下执行，用于拉低 `OF_EN` 并将 DAC 目标电流归零。
+`SetOF:0` 是安全关断命令，允许在任意状态下执行，用于拉高 `OF_EN` 并将 DAC 目标电流归零。
 
 输出使能状态变化时，固件会通过状态帧上报：
 
@@ -176,7 +176,7 @@ DebugResume2A\r\n
 示例：
 
 ```
-[Calc] R:2.000R U1:400.00V I1:3.00A U2:398.00V I2:2.00A IOC:3.00A
+[Calc] R:2.000R U1:400.00V I1:3.00A U2:398.00V I2:2.00A IOC:4.90A
 ```
 
 字段含义：
@@ -188,7 +188,7 @@ DebugResume2A\r\n
 | `I1` | A | 3A 稳定后锁存的 `CO_OUT` |
 | `U2` | V | 2A 稳定后锁存的 `VO_OUT` |
 | `I2` | A | 2A 稳定后锁存的 `CO_OUT` |
-| `IOC` | A | 当前实现中的 IOC 观测/占位值，暂以 3A 锁存电流 `I1` 上报；尚未表示基于内阻动态计算出的最大安全限流值 |
+| `IOC` | A | 当前实现中的 IOC 闭环结果；由 `STATE_CALC_RESISTANCE` 基于本次 DCR 测量结果调用交流线阻限功率闭环计算得到，并作为最终安全限流目标上报 |
 
 GUI 必须使用 `CALC_PATTERN` 独立解析该帧，不得从终端日志文本中二次推断字段。
 
@@ -229,8 +229,8 @@ GUI 必须使用 `CALC_PATTERN` 独立解析该帧，不得从终端日志文本
 
 | 状态值 | 含义 |
 |---|---|
-| `OF_ENABLED` | `OF_EN` 已拉高，物理输出通道已使能 |
-| `OF_DISABLED` | `OF_EN` 已拉低，物理输出通道已关闭，DAC 目标电流归零 |
+| `OF_ENABLED` | `OF_EN` 已拉低，物理输出通道已使能 |
+| `OF_DISABLED` | `OF_EN` 已拉高，物理输出通道已关闭，DAC 目标电流归零 |
 | `CONTROL_REJECTED` | 控制命令被测量就绪/保护状态/输出控制层安全门控拒绝 |
 
 ### 9.3 内阻计算状态
@@ -277,7 +277,7 @@ GUI 必须使用 `CALC_PATTERN` 独立解析该帧，不得从终端日志文本
 [Error] OPEN_CIRCUIT_DETECTED
 ```
 
-该异常表示 3A 判稳流程已经达到连续稳定次数要求，但当前 `CO_OUT` 幅值仍低于开路阈值，状态机会锁存异常并退回 `WAIT_SAFE`，不会在安全状态保持不变时自动重新发起 3A 探测。
+该异常表示 3A 判稳流程已经达到连续稳定次数要求，但当前 `CO_OUT` 幅值仍低于开路阈值，状态机会锁存异常并退回 `WAIT_SAFE`。当后续物理电流恢复到 `>= 0.1A` 时，固件会在 `WAIT_SAFE` 中自动解除开路锁存，允许在 `safe_allowed == true` 时重新发起 3A 探测。
 
 ---
 

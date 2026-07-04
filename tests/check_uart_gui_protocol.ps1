@@ -450,7 +450,7 @@ foreach ($needle in @(
     'OTP_TRIP_THRESHOLD',
     'OVP_TRIP_THRESHOLD',
     'OCP_TRIP_THRESHOLD',
-    '!is_safe_limit',
+    'is_fault_active',
     'RECOVERY_OBSERVE_MS',
     'OUTPUT_PROTECTION_RECOVERY_WAIT'
 )) {
@@ -504,9 +504,9 @@ foreach ($needle in @(
     }
 }
 
-$openCircuitGatePattern = 'if\s*\(\s*input->safe_allowed\s*&&\s*\(s_open_circuit_latched\s*==\s*0U\)\s*\)'
+$openCircuitGatePattern = 'if\s*\(\s*input->safe_allowed\s*\)'
 if (-not [regex]::IsMatch($calcControl, $openCircuitGatePattern)) {
-    throw 'Calc control WAIT_SAFE must block auto-restart while the open-circuit latch is set.'
+    throw 'Calc control WAIT_SAFE must trigger probe when safe_allowed is set.'
 }
 
 foreach ($needle in @(
@@ -591,7 +591,7 @@ if ($stackHookBody.Contains('Output_Control_Disable()') -or $stackHookBody.Conta
 }
 foreach ($needle in @(
     'portDISABLE_INTERRUPTS();',
-    'OF_EN_GPIO_Port->BRR = (uint32_t)OF_EN_Pin;',
+    'OF_EN_GPIO_Port->BSRR = (uint32_t)OF_EN_Pin;',
     'DAC1->DHR12R1 = 0U;'
 )) {
     if (-not $stackHookBody.Contains($needle)) {

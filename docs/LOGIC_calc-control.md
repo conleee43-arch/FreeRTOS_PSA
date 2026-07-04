@@ -21,11 +21,11 @@
 | **STATE_SET_3A** | 设定 3A 阶跃电流 | 状态机在此状态将控制 DAC 目标物理量阶跃式更改为 $3.0\text{A}$，随后立即跳转至下一状态。 |
 | **STATE_WAIT_3A_STABLE** | 等待 3A 电流稳定 | **核心自循环状态**。每 10ms 唤醒一次，内部 100ms 分频采样电流并与上次采样值作差值判定。若连续 5 次差值均 ≤ 500mA 则判定稳定，否则原地自循环并释放 CPU。可能的等待时间为 1 秒至无限长。 |
 | **STATE_LATCH_3A** | 锁存 3A 采样指标 | 倒计时结束后，在极短时间片内执行遥测电压与电流的高精度采样锁存，记录为 $U_1$ 和 $I_1$，随后跳转。 |
-| **STATE_SET_2A** | 设定 2A 阶跃电流 | 状态机在此状态将控制 DAC 目标物理量阶跃降落至动态值 $I_1 - 1.0\text{A}$（限制在 $[0.1\text{A}, 10.0\text{A}]$ 区间内），随后立即跳转。 |
+| **STATE_SET_2A** | 设定 2A 阶跃电流 | 状态机在此状态将控制 DAC 目标物理量阶跃降落至动态值 $I_1 - 1.0\text{A}$（限制在 $[0.1\text{A}, 15.0\text{A}]$ 区间内），随后立即跳转。 |
 | **STATE_WAIT_2A_STABLE** | 等待 2A 电流稳定 | 进行消抖窗口倒计时。当前实现等待 10s（由 `STEP_2A_STABLE_MS = 10000U` 定义），以完成 2A 阶跃后的稳态观察；该窗口支持调试命令挂起/恢复。 |
 | **STATE_LATCH_2A** | 锁存 2A 采样指标 | 倒计时结束后，执行第二组高精度遥测电压与电流锁存，记录为 $U_2$ 和 $I_2$，随后跳转。 |
-| **STATE_CALC_RESISTANCE** | 执行内阻代数计算 | 运行核心内阻代数求解数学公式，将计算出的阻值入库，并发布包含 IOC 观测值的计算报告，随后跳转。 |
-| **STATE_MONITOR** | 计算完成与静态监控 | 状态机的终点。在此状态下，内阻计算结束，不再主动更改 DAC 的输出目标，直到接收到重置命令。 |
+| **STATE_CALC_RESISTANCE** | 执行内阻代数计算 | 运行核心内阻代数求解数学公式，并把阻值送入交流线阻限功率闭环，发布包含最终 IOC 结果的计算报告，随后跳转。 |
+| **STATE_MONITOR** | 计算完成与静态监控 | 保持最后一次有效 IOC 闭环结果；若收到重置/失安，或监测到在线交流通道数与锁存值不一致，则撤销当前闭环并退出。 |
 
 ---
 
@@ -75,7 +75,7 @@ $$R_{int} = \frac{U_1 - U_2}{I_1 - I_2}$$
 | `STEP_3A_SAMPLE_INTERVAL_MS` | 100 | ms | 电流采样间隔 |
 | `CURRENT_DELTA_THRESHOLD_MA` | 500 | mA | 电流差值判定阈值 |
 | `STABLE_CONSECUTIVE_COUNT` | 5 | 次 | 连续稳定判定次数 |
-| `CURRENT_MIN_THRESHOLD_MA` | 1000 | mA | 开路检测最小电流阈值 |
+| `CURRENT_MIN_THRESHOLD_MA` | 100 | mA | 开路检测最小电流阈值 |
 | `MIN_DI_THRESHOLD` | 0.2 | A | DCR 计算所用的最小电流跌落差值 |
 | `MIN_STEP_2A_LIMIT` (硬编码) | 0.1 | A | 第二阶段动态电流阶跃下限 |
 | `MAX_STEP_2A_LIMIT` (硬编码) | 15.0 | A | 第二阶段动态电流阶跃上限 |
@@ -98,7 +98,7 @@ $$\text{Stable} \iff \forall k \in [1, N]: |I_k - I_{k-1}| \leq \text{CURRENT\_D
 
 1. **检查电流幅值**：读取当前稳定后的电流值 $I_{stable}$
 2. **判定条件**：
-   - 若 $I_{stable} < \text{CURRENT\_MIN\_THRESHOLD\_MA}$（默认 1000mA），判定为**开路或负载异常**
+   - 若 $I_{stable} < \text{CURRENT\_MIN\_THRESHOLD\_MA}$（默认 100mA），判定为**开路或负载异常**
    - 若 $I_{stable} \geq \text{CURRENT\_MIN\_THRESHOLD\_MA}$，判定为正常负载，状态机继续转移至 `STATE_LATCH_3A`
 
 **开路异常处理**：
@@ -108,7 +108,7 @@ $$\text{Stable} \iff \forall k \in [1, N]: |I_k - I_{k-1}| \leq \text{CURRENT\_D
 - 锁存开路抑制标志并退回至 `STATE_WAIT_SAFE`，禁止在安全状态维持不变时自动重启 3A 探测
 - 保持原设定 DAC 控制量不变，不强制归零，以防扫频或循环探测产生控制电压脉冲抖动
 - 调用方可通过 `open_circuit_error` 标志获取错误状态并执行相应处理（如告警、显式复位、等待安全状态重新切换后再触发等）
-- **开路状态自动恢复**：在 `STATE_WAIT_SAFE` 安全等待状态下，如果系统监测到物理电流 `co_out_a` 恢复到 $\ge 1.0\text{A}$，则会自动清除开路锁存标志（即 `s_open_circuit_latched = 0`），允许状态机在 `safe_allowed == true` 时自动重新进入 `STATE_SET_3A`。
+- **开路状态自动重置**：由于在安全等待状态 `STATE_WAIT_SAFE` 下发起 3A 探测前不拦截开路状态，因此一旦系统满足安全条件（`safe_allowed == true`），状态机会直接自动发起新的 3A 探测并转入 `STATE_SET_3A`，同时在进入 `STATE_SET_3A` 阶段时自动将开路锁存清除（即 `s_open_circuit_latched = 0`）。
 
 
 **判定逻辑图示**：
@@ -119,7 +119,7 @@ STATE_WAIT_3A_STABLE
    [连续5次稳定判定通过]
         │
         ▼
-  [当前电流 < 1000mA ?]
+  [当前电流 < 100mA ?]
         │
    Yes ─┴─ No
     │        │
@@ -166,11 +166,20 @@ reset      → LATCH_3A
 
 内阻计算任务不是完全独立的，业务代码必须支持并强制约束以下安全联动行为：
 
-### 5.1 IOC 观测值与后续限流策略
-- 当前实现中，`IOC` 是随 `[Calc]` 报告输出的**观测/占位值**：在 `STATE_LATCH_2A` 中暂以 3A 锁存点电流 `I1` 写入 `output->ioc`，用于让 GUI 与日志保留限流字段显示。
-- 当前实现尚未根据 $R_{int}$ 动态计算最大安全控制限制电流，也不会在 `STATE_CALC_RESISTANCE` 后主动改写 DAC 限流目标。
-- 计算完成后，状态机转移至 `STATE_MONITOR`，释放主动阶跃控制权，保证后续业务不会再次由内阻状态机主动改变 DAC 的硬件输出。
-- 若未来实现基于内阻的动态 IOC 限流策略，必须先在本节补充公式、边界条件、限幅规则和对应回归测试，再修改 `calc_control.c`。
+### 5.1 IOC 闭环结果与重测回退策略
+- 当前实现中，`IOC` 不再是观测/占位值。`STATE_CALC_RESISTANCE` 在得到 $R_{int}$ 后，会立即调用交流线阻限功率闭环（`Process_AcLine_Limit()`）计算最终的直流限流目标 `idc_max_limit_a`，并将其写入 `output->ioc`。
+- 当闭环判定成功时，状态机会同时：
+  - 锁存本次有效阻值 `r_new_locked_ohm`
+  - 锁存当前在线交流通道数 `online_channel_count`
+  - 置位 `ioc_valid = 1` 与 `ioc_updated = 1`
+  - 通过 `set_current_a = IOC` 与 `change_current = 1` 立即改写 DAC 电流目标
+  - 转入 `STATE_MONITOR` 持有该闭环结果
+- 当闭环任一安全前提不满足时（如阻值超出允许范围、与上次锁存值跳变过大、无有效交流通道、平均输出电压过低等），状态机不会保留本次 IOC：
+  - 清零 `ioc` / `ioc_valid`
+  - 输出 `need_retest = 1`
+  - 通过 `set_current_a = 0.0A` 与 `change_current = 1` 撤回测试电流
+  - 退回 `STATE_WAIT_SAFE`，等待下一次安全重测
+- `STATE_MONITOR` 并非“完全静态结束态”。它会持续保留最后一次有效 IOC；若监测到当前在线交流通道数与闭环锁存值不一致，则必须立即撤销当前 IOC、置位 `need_retest = 1` 并退回 `STATE_WAIT_SAFE`。
 
 ### 5.2 状态机紧急退回语义
 - 在内阻状态机运转的任何阶段（无论是处于 3A 阶跃还是锁存阶段），如果高优先级保护任务发现物理量越限并向 `Calc_Control_Task` 下发重置请求：
@@ -180,6 +189,6 @@ reset      → LATCH_3A
 
 ### 5.3 上电冷启动状态联动 (Power-on Startup Coordination)
 - **冷启动防冲击观察期**：系统上电后，保护状态机处于 `STATE_TRIPPED` 并向 `STATE_RECOVERY_WAIT` 转移。在 **2.0 秒安全观察期** 内，由于保护任务未进入 `STATE_NORMAL` 状态，`safe_allowed` 始终保持为 `false`。
-- **DAC 零电流保护**：计算状态机在 2.0 秒观察期内被强制锁定在 `STATE_WAIT_SAFE`，DAC 目标控制电流输出维持为 `0.0A`，物理总闸（OF_EN）保持低电平。
-- **自动使能物理输出**：2.0 秒防冲击观察期结束后，保护任务自动拉高 OF_EN（打通物理总闸）并切换至 `STATE_NORMAL`。
+- **DAC 零电流保护**：计算状态机在 2.0 秒观察期内被强制锁定在 `STATE_WAIT_SAFE`，DAC 目标控制电流输出维持为 `0.0A`，物理总闸（OF_EN）保持高电平（关闭）。
+- **自动使能物理输出**：2.0 秒防冲击观察期结束后，保护任务自动拉低 OF_EN（打通物理总闸）并切换至 `STATE_NORMAL`。
 - **自动触发阶跃**：计算任务在下一个周期立即检测到 `safe_allowed == true`，状态机自主触发转移进入 `STATE_SET_3A`，开始执行 DAC 输出 3A 并进行动态稳定判定。

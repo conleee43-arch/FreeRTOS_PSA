@@ -85,7 +85,7 @@ void SystemClock_Config(void)
 | `V1_IN` | `124.4f` | 用于把合成交流输入电压换算成近似 ADC 原始码 |
 | `V2_IN` | `124.4f` | 同上 |
 | `CO_OUT` | `6.0f` | 用于把合成输出电流换算成近似 ADC 原始码 |
-| `VO_OUT` | `200.0f` | 用于把合成输出电压换算成近似 ADC 原始码 |
+| `VO_OUT` | `220.0f` | 用于把合成输出电压换算成近似 ADC 原始码 |
 
 这些仿真常量只服务于合成波形可视化；真实硬件通道的唯一标定真理仍是下文 `adc_physics.c` 表驱动通道属性。
 
@@ -97,9 +97,9 @@ void SystemClock_Config(void)
 
 | 外设/引脚 | 物理引脚 | 配置模式 | 作用与功能 |
 |---|---|---|---|
-| **DAC1_OUT1** | PA4 | Analog (模拟模式) | 闭环 PFC 目标反馈电流输出 (0.00 ~ 10.00A) |
+| **DAC1_OUT1** | PA4 | Analog (模拟模式) | 闭环 PFC 目标反馈电流输出 (0.00 ~ 15.00A) |
 | **DAC1_OUT2** | PA5 | Analog (模拟模式) | VOC 模拟信号输出控制 (0.0V ~ 2.5V) |
-| **OF_EN** | PA6 | Output PP (推挽输出) | 过流保护硬件使能控制信号 (使能: 1 / 禁用: 0) |
+| **OF_EN** | PA6 | Output PP (推挽输出) | 过流保护硬件使能控制信号 (使能: 0 / 禁用: 1) |
 | **EXTI_PB0** | PB0 | EXTI 双边沿 (输入上拉) | 外部边沿触发中断信号，在 `HAL_GPIO_EXTI_Callback` 回调中读取电平状态 |
 
 ### 5.1 DAC 控制接口 (PA4 / PA5)
@@ -112,9 +112,9 @@ void SystemClock_Config(void)
   * `void DAC_Control_SetValue(uint32_t value)`：直接设置 12 位寄存器原始数字量 (0 ~ 4095)。
   * `void DAC_Control_SetPfcCurrent(float current_A)`：根据目标电流物理值换算输出。
 * **VOC 通道 (PA5 - DAC1_OUT2)**:
-  * `void DAC_Control_VocStart(uint32_t initial_value)`：启动通道 2 并写入初始数字量。
-  * `void DAC_Control_VocStop(void)`：停止通道 2 输出。
-  * `void DAC_Control_VocSetValue(uint32_t value)`：直接设置 12 位寄存器原始数字量 (0 ~ 4095)。
+  * `void DAC_Control_StartVOC(uint32_t initial_value)` / `void DAC_Control_VocStart(uint32_t initial_value)`：启动通道 2 并写入初始数字量。
+  * `void DAC_Control_StopVOC(void)` / `void DAC_Control_VocStop(void)`：停止通道 2 输出。
+  * `void DAC_Control_SetVOCValue(uint32_t value)` / `void DAC_Control_VocSetValue(uint32_t value)`：直接设置 12 位寄存器原始数字量 (0 ~ 4095)。
   * `void DAC_Control_SetVocVoltage(float voltage_V)`：根据目标物理电压（0.0V ~ 2.5V）以系数 `DAC_VOLTAGE_FACTOR`（1638.0）换算后输出。
 
 ---
@@ -163,7 +163,7 @@ static Physical_Channel_t s_channels[PHYS_CH_NUM] = {
     
     [PHYS_CH_VO_OUT] = {
         .config = {
-            .physical_max    = 500.0f,
+            .physical_max    = 550.0f,
             .pin_max_voltage = 2.50f,
             .offset_value    = 0.0f
         },

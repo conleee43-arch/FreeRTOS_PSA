@@ -74,7 +74,7 @@ typedef struct {
 #define STABLE_CONSECUTIVE_COUNT    5U     /* 连续稳定判定次数 */
 #define STEP_3A_SAMPLE_INTERVAL_MS  100U    /* 电流采样间隔，单位：ms */
 #define STEP_3A_POLL_INTERVAL_MS    10U     /* 状态机轮询周期，单位：ms */
-#define CURRENT_MIN_THRESHOLD_MA     1000U   /* 最小电流阈值，开路检测用，单位：mA */
+#define CURRENT_MIN_THRESHOLD_MA     100U    /* 最小电流阈值，开路检测用，单位：mA */
 #define CALC_CONTROL_IOC_GAIN_K      1.0f   /* 阶段 A 闭环 IOC 增益 */
 #define CALC_CONTROL_IOC_MIN_A       0.1f   /* 闭环 IOC 最小钳位 */
 #define CALC_CONTROL_IOC_MAX_A       15.0f  /* 闭环 IOC 最大钳位 */

@@ -20,10 +20,8 @@ void Output_Protection_Update(const Output_Protection_Input_t *input, Output_Pro
                               (input->vo_out_v >= OVP_TRIP_THRESHOLD) ||
                               (input->co_out_a >= OCP_TRIP_THRESHOLD);
 
-    /* 检查是否完全回落到迟滞自恢复安全点以下 */
-    uint8_t is_safe_limit = (input->temperature_c < OTP_RECOVERY_THRESHOLD) &&
-                            (input->vo_out_v < OVP_RECOVERY_THRESHOLD) &&
-                            (input->co_out_a < OCP_RECOVERY_THRESHOLD);
+    /* 恢复观察期仅保留温度回落判定 */
+    uint8_t is_recovery_temp_safe = (input->temperature_c < OTP_RECOVERY_THRESHOLD);
 
     switch (s_state)
     {
@@ -37,7 +35,7 @@ void Output_Protection_Update(const Output_Protection_Input_t *input, Output_Pro
             break;
 
         case OUTPUT_PROTECTION_TRIPPED:
-            if (is_safe_limit)
+            if (is_recovery_temp_safe)
             {
                 s_state = OUTPUT_PROTECTION_RECOVERY_WAIT;
                 s_recovery_start_tick = input->tick_ms;
@@ -51,7 +49,7 @@ void Output_Protection_Update(const Output_Protection_Input_t *input, Output_Pro
             break;
 
         case OUTPUT_PROTECTION_RECOVERY_WAIT:
-            if (is_fault_active || !is_safe_limit)
+            if (is_fault_active || !is_recovery_temp_safe)
             {
                 s_state = OUTPUT_PROTECTION_TRIPPED;
                 output->disable_output = 1;

@@ -26,6 +26,9 @@
 | [plans/2026-06-19-ac-line-limit-implementation-plan.md](plans/2026-06-19-ac-line-limit-implementation-plan.md#ac-line-limit-implementation-plan) | 基于交流线路等效线阻动态限制系统充电功率的实现文档，包含问题描述、实施过程、测试顺序与验收标准。 | 替代 `LOGIC_calc-control.md` 的状态机真理定义、未确认的硬件规格变更。 | 执行交流线阻闭环限功率开发前，用于按步骤实施时 |
 | [plans/2026-06-19-ac-line-limit-bringup-checklist.md](plans/2026-06-19-ac-line-limit-bringup-checklist.md#ac-line-limit-bringup-checklist) | 交流线阻闭环限功率上板联调检查单，覆盖示波观察点、串口状态帧顺序、期望波形与 VIN1/VIN2/VOC/IOC 参数记录要求。 | 替代接口协议真理、未确认的硬件改线结论、脱离现有命名体系的新字段定义。 | 进行上板联调、工装验收或现场故障复盘前，用于逐项核对时 |
 | [plans/2026-06-20-stm32g431kb-migration-plan.md](plans/2026-06-20-stm32g431kb-migration-plan.md#stm32g431kb-migration-plan) | STM32G431CB 迁移到 STM32G431KB 且 ADC 基准改为外部稳定 2.5V 直供的实施计划，覆盖测试先行顺序、CubeMX/Keil 受影响文件、测量链路兼容策略与最终回归命令。 | 替代 `ARCH_technical-specs.md` 的长期硬件真理定义、跳过测试直接实施的口头迁移步骤、未经验证的板级改线结论。 | 执行本次 32 引脚 KB 平台移植前，用于按步骤实施时 |
+| [firmware_tasks.drawio](firmware_tasks.drawio) | 固件任务逻辑关系图 (包括 4 个核心 FreeRTOS 任务、物理外设、缓冲区与消息队列总线)。 | 具体计算公式、寄存器配置字面量。 | 梳理固件的并发多任务实时架构与交互时 |
+| [calc_control_fsm.drawio](calc_control_fsm.drawio) | 内阻计算任务状态机逻辑关系图 (九段式 FSM 状态、稳定/开路判定与保护重置退回逻辑)。 | 具体算法代码细节。 | 开发与验证内阻计算状态机逻辑与观察期时 |
+
 
 
 ---

@@ -23,10 +23,8 @@ class CalcState(IntEnum):
 
 OTP_TRIP_THRESHOLD = 85.0
 OTP_RECOVERY_THRESHOLD = 75.0
-OVP_TRIP_THRESHOLD = 420.0
-OVP_RECOVERY_THRESHOLD = 390.0
+OVP_TRIP_THRESHOLD = 520.0
 OCP_TRIP_THRESHOLD = 12.0
-OCP_RECOVERY_THRESHOLD = 10.0
 RECOVERY_OBSERVE_MS = 2000
 STEP_3A_STABLE_MS = 100
 STEP_2A_STABLE_MS = 10000
@@ -51,11 +49,7 @@ class OutputProtectionModel:
             or vo_out_v >= OVP_TRIP_THRESHOLD
             or co_out_a >= OCP_TRIP_THRESHOLD
         )
-        safe_limit = (
-            temperature_c < OTP_RECOVERY_THRESHOLD
-            and vo_out_v < OVP_RECOVERY_THRESHOLD
-            and co_out_a < OCP_RECOVERY_THRESHOLD
-        )
+        safe_limit = temperature_c < OTP_RECOVERY_THRESHOLD
 
         if self.state == ProtectionState.NORMAL:
             if fault_active:
@@ -102,6 +96,7 @@ class CalcControlModel:
         # 交流线阻限功率闭环：上次锁定阻值及其有效标志
         self.r_last_locked_ohm = 0.0
         self.r_last_valid = False
+        self.online_channel_count_locked = 0
         # 2A 等待挂起/恢复相关变量
         self.wait2a_paused = False
         self.wait2a_pause_tick = 0
@@ -178,10 +173,13 @@ class CalcControlModel:
             self.i1_stable_count = 0
             self.open_circuit_error = 0
             self.open_circuit_latched = 0
+            self.wait2a_paused = False
+            self.wait2a_pause_tick = 0
             self.ioc_target = 0.0
             self.ioc_valid = False
             self.r_last_locked_ohm = 0.0
             self.r_last_valid = False
+            self.online_channel_count_locked = 0
             output["set_current_a"] = 0.0
             output["change_current"] = 1
             output["calculated_resistance"] = 0.0
@@ -195,7 +193,7 @@ class CalcControlModel:
             keep_running = False
 
             if self.state == CalcState.WAIT_SAFE:
-                if safe_allowed and not self.open_circuit_latched:
+                if safe_allowed:
                     self.state = CalcState.SET_3A
                     keep_running = True
             elif self.state == CalcState.SET_3A:
@@ -218,7 +216,7 @@ class CalcControlModel:
                         self.i1_stable_count += 1
                         output["stable_count"] = self.i1_stable_count
                         if self.i1_stable_count >= 5:
-                            if co_out_a < 1.0:
+                            if co_out_a < 0.1:
                                 self.open_circuit_error = 1
                                 self.open_circuit_latched = 1
                                 output["open_circuit_error"] = 1
@@ -249,6 +247,8 @@ class CalcControlModel:
                 output["set_current_a"] = target
                 output["change_current"] = 1
                 self.state_start_tick = tick_ms
+                self.wait2a_paused = False
+                self.wait2a_pause_tick = 0
                 self.state = CalcState.WAIT_2A_STABLE
             elif self.state == CalcState.WAIT_2A_STABLE:
                 if self.wait2a_paused:
@@ -299,6 +299,7 @@ class CalcControlModel:
                 if ll_status == LINE_LIMIT_STATUS_OK:
                     self.r_last_locked_ohm = ll_state["r_new_locked_ohm"]
                     self.r_last_valid = True
+                    self.online_channel_count_locked = ll_state["online_channel_count"]
                     self.ioc_target = ll_state["idc_max_limit_a"]
                     self.ioc_valid = True
                     output["ioc"] = self.ioc_target
@@ -321,9 +322,29 @@ class CalcControlModel:
                     output["publish_calc_report"] = 1
                     self.state = CalcState.WAIT_SAFE
             elif self.state == CalcState.MONITOR:
-                output["enter_monitor"] = 1
-                output["ioc"] = self.ioc_target if self.ioc_valid else 0.0
-                output["ioc_valid"] = 1 if self.ioc_valid else 0
+                ll_cfg = default_line_limit_config()
+                ch1_online = vac_ch1_v > ll_cfg["ac_online_threshold_v"]
+                ch2_online = vac_ch2_v > ll_cfg["ac_online_threshold_v"]
+                online_channel_count_current = (1 if ch1_online else 0) + (1 if ch2_online else 0)
+                if (
+                    self.ioc_valid
+                    and self.online_channel_count_locked != 0
+                    and online_channel_count_current != 0
+                    and online_channel_count_current != self.online_channel_count_locked
+                ):
+                    self.ioc_target = 0.0
+                    self.ioc_valid = False
+                    self.online_channel_count_locked = 0
+                    output["ioc"] = 0.0
+                    output["ioc_valid"] = 0
+                    output["set_current_a"] = 0.0
+                    output["change_current"] = 1
+                    output["need_retest"] = 1
+                    self.state = CalcState.WAIT_SAFE
+                else:
+                    output["enter_monitor"] = 1
+                    output["ioc"] = self.ioc_target if self.ioc_valid else 0.0
+                    output["ioc_valid"] = 1 if self.ioc_valid else 0
             else:
                 self.state = CalcState.WAIT_SAFE
 
@@ -536,66 +557,70 @@ def check_output_protection_behavior():
     model = OutputProtectionModel()
     assert_equal(model.state, ProtectionState.TRIPPED, "power-on default state is TRIPPED")
     
-    # 刚上电，在 100ms 时检测正常，应该转入 RECOVERY_WAIT 并记录 tick
-    out = model.update(25.0, 380.0, 0.0, 100)
+    # 刚上电，在 100ms 时检测温度安全，应该转入 RECOVERY_WAIT 并记录 tick；电压不再参与恢复入口判定
+    out = model.update(25.0, 310.0, 0.0, 100)
     assert_equal(model.state, ProtectionState.RECOVERY_WAIT, "safe startup enters recovery wait")
     assert_equal(out["enable_output"], 0, "recovery wait does not enable immediately")
     
     # 观察期中 (未满 2000ms)，保持 RECOVERY_WAIT
-    out = model.update(25.0, 380.0, 0.0, 1000)
+    out = model.update(25.0, 310.0, 0.0, 1000)
     assert_equal(model.state, ProtectionState.RECOVERY_WAIT, "still in recovery wait")
     assert_equal(out["enable_output"], 0, "still disabled")
     
     # 观察期满 (2100ms - 100ms = 2000ms)，回到 NORMAL，自动拉高使能
-    out = model.update(25.0, 380.0, 0.0, 2100)
+    out = model.update(25.0, 310.0, 0.0, 2100)
     assert_equal(model.state, ProtectionState.NORMAL, "recovery finishes, enters normal")
     assert_equal(out["enable_output"], 1, "recovery completion enables output")
     
     # 处于 NORMAL 状态时，注入超温故障，触发跳闸
-    out = model.update(85.5, 380.0, 3.0, 2200)
+    out = model.update(85.5, 310.0, 3.0, 2200)
     assert_equal(model.state, ProtectionState.TRIPPED, "overtemperature trips to TRIPPED")
     assert_equal(out["disable_output"], 1, "trip disables output")
     assert_equal(out["reset_calc_control"], 1, "trip resets calc")
-
+ 
     # 温度回落但仍处于迟滞区间 (75度 - 85度之间)，保持 TRIPPED
-    out = model.update(80.0, 380.0, 3.0, 2300)
+    out = model.update(80.0, 310.0, 3.0, 2300)
     assert_equal(model.state, ProtectionState.TRIPPED, "hysteresis keeps tripped")
     assert_equal(out["disable_output"], 1, "tripped state keeps output disabled")
-
-    # 温度彻底安全 (<75度)，再次进入自愈等待
-    out = model.update(74.5, 380.0, 3.0, 2400)
+ 
+    # 温度彻底安全 (<75度)，即使电压/电流高于旧版恢复阈值，只要未触发跳闸，也再次进入自愈等待
+    out = model.update(74.5, 400.0, 11.5, 2400)
     assert_equal(model.state, ProtectionState.RECOVERY_WAIT, "safe values re-enter recovery wait")
     assert_equal(out["enable_output"], 0, "no immediate enable")
-
+ 
     # 在自愈等待中再次遇到故障，被打回 TRIPPED
-    out = model.update(86.0, 380.0, 3.0, 3000)
+    out = model.update(86.0, 310.0, 3.0, 3000)
     assert_equal(model.state, ProtectionState.TRIPPED, "fault during recovery wait trips back")
     assert_equal(out["disable_output"], 1, "disables output")
-
-    # 再次安全并正常完成自愈
-    out = model.update(74.0, 380.0, 3.0, 3100)
+ 
+    # 再次安全并正常完成自愈；观察期内允许维持在未达跳闸的高电压/高电流区间
+    out = model.update(74.0, 400.0, 11.5, 3100)
     assert_equal(model.state, ProtectionState.RECOVERY_WAIT, "re-enter recovery wait")
-    out = model.update(74.0, 380.0, 3.0, 5099)
+    out = model.update(74.0, 400.0, 11.5, 5099)
     assert_equal(model.state, ProtectionState.RECOVERY_WAIT, "wait full window")
-    out = model.update(74.0, 380.0, 3.0, 5100)
+    out = model.update(74.0, 400.0, 11.5, 5100)
     assert_equal(model.state, ProtectionState.NORMAL, "normal recovery finished")
     assert_equal(out["enable_output"], 1, "enables output")
-
-    # 验证其他通道跳闸：从 NORMAL 开始
-    for label, temperature, voltage, current in (
-        ("overvoltage", 40.0, 420.0, 3.0),
-        ("overcurrent", 40.0, 380.0, 12.0),
+ 
+    # 过压/过流仍能从 NORMAL 直接跳闸，同时验证它们回落到未跳闸区后可在低温条件下进入恢复观察期
+    for label, temperature, voltage, current, recover_voltage, recover_current in (
+        ("overvoltage", 40.0, 525.0, 3.0, 400.0, 3.0),
+        ("overcurrent", 40.0, 310.0, 12.0, 310.0, 11.5),
     ):
         # 建立一个已自愈正常的模型
         m = OutputProtectionModel()
-        m.update(25.0, 380.0, 0.0, 0)      # RECOVERY_WAIT, start=0
-        m.update(25.0, 380.0, 0.0, 2000)   # NORMAL, enable_output=1
+        m.update(25.0, 310.0, 0.0, 0)      # RECOVERY_WAIT, start=0
+        m.update(25.0, 310.0, 0.0, 2000)   # NORMAL, enable_output=1
         assert_equal(m.state, ProtectionState.NORMAL, "stabilized to normal")
         
         # 注入故障
         out = m.update(temperature, voltage, current, 2010)
         assert_equal(m.state, ProtectionState.TRIPPED, f"{label} trips")
         assert_equal(out["disable_output"], 1, f"{label} disables output")
+
+        # 故障值回落到未跳闸区间后，只要温度安全就允许进入恢复观察期
+        out = m.update(25.0, recover_voltage, recover_current, 2200)
+        assert_equal(m.state, ProtectionState.RECOVERY_WAIT, f"{label} clears into recovery wait")
 
 
 def check_calc_control_behavior():
@@ -697,33 +722,40 @@ def check_calc_control_behavior():
     # 0ms: 触发进入 WAIT_3A_STABLE，co_out_a = 0.0A
     model.update(400.0, 0.0, 0, True)
     
-    # 连续 5 次 stable，但电流极低 (0.1A = 100mA < 1A)
+    # 连续 5 次 stable，但电流极低 (0.05A = 50mA < 0.1A)
     # 100ms, 200ms, 300ms, 400ms
     for t in [100, 200, 300, 400]:
-        out = model.update(400.0, 0.1, t, True)
+        out = model.update(400.0, 0.05, t, True)
         assert_equal(model.state, CalcState.WAIT_3A_STABLE, f"stable counting in progress, tick={t}")
     
-    # 500ms: 连续 5 次稳定完成，由于 0.1A < 1.0A，触发开路检测，复位回到 WAIT_SAFE
-    out = model.update(400.0, 0.1, 500, True)
+    # 500ms: 连续 5 次稳定完成，由于 0.05A < 0.1A，触发开路检测，复位回到 WAIT_SAFE
+    out = model.update(400.0, 0.05, 500, True)
     assert_equal(model.state, CalcState.WAIT_SAFE, "low-current stable state resets to WAIT_SAFE (open-circuit)")
     assert_equal(out.get("open_circuit_error", 0), 1, "open circuit error is set")
     # 开路时不强制归零电流
     assert_equal(out["change_current"], 0, "open circuit does not trigger current change")
     assert_equal(model.open_circuit_latched, 1, "open circuit result latches retry inhibit")
 
-    # 510ms: 安全条件保持不变时，不应自动重新切回 SET_3A
-    out = model.update(400.0, 0.1, 510, True)
-    assert_equal(model.state, CalcState.WAIT_SAFE, "open circuit stays in WAIT_SAFE until explicit reset or unsafe transition")
-    assert_equal(out["change_current"], 0, "latched open circuit does not auto-drive current again")
+    # 510ms: 无论电流是否恢复，只要 safe_allowed == True，就会立即重新发起新的 3A 探测并自动清零锁存
+    out = model.update(400.0, 0.05, 510, True)
+    assert_equal(model.state, CalcState.WAIT_3A_STABLE, "state machine automatically triggers a new 3A probe")
+    assert_equal(model.open_circuit_latched, 0, "entering SET_3A clears the open-circuit latch")
+    assert_equal(out["change_current"], 1, "retry re-drives 3A current")
+    assert_close(out["set_current_a"], 3.0, "retry sets 3A target")
 
     # 3. reset_request 测试
     model = CalcControlModel()
     model.update(400.0, 0.0, 0, True)
-    out = model.update(399.0, 3.0, 10, True, reset_request=True)
+    for t in [100, 200, 300, 400, 500, 600]:
+        out = model.update(399.0, 3.0, t, True)
+    model.pause_wait2a(650)
+    out = model.update(399.0, 3.0, 700, True, reset_request=True)
     assert_equal(model.state, CalcState.WAIT_SAFE, "reset request returns wait safe")
     assert_close(out["calculated_resistance"], 0.0, "reset clears resistance")
     assert_equal(out["ioc_valid"], 0, "reset request clears closed-loop validity")
     assert_close(out["ioc"], 0.0, "reset request clears IOC target")
+    assert_equal(model.is_wait2a_paused(), False, "reset request clears 2A pause flag")
+    assert_equal(model.wait2a_pause_tick, 0, "reset request clears 2A pause tick")
 
     # 4. 验证动态设定值的限幅以及差值信噪比保护
     # 情况 A：I1 = 1.0A，设定值降至 1.0 - 1.0 = 0A -> 限幅到 0.1A
@@ -867,6 +899,8 @@ def check_pause_resume_2a_behavior():
     for t in [100, 200, 300, 400, 500, 600]:
         out = model.update(399.0, 3.0, t, True)
     assert_equal(model.state, CalcState.WAIT_2A_STABLE, "enters WAIT_2A_STABLE after 3A stable")
+    assert_equal(model.is_wait2a_paused(), False, "SET_2A clears any stale pause flag on entry")
+    assert_equal(model.wait2a_pause_tick, 0, "SET_2A clears any stale pause tick on entry")
 
     # 在 WAIT_2A_STABLE 状态挂起（tick=700）
     result = model.pause_wait2a(700)
@@ -1010,6 +1044,28 @@ def check_calc_line_limit_integration():
     assert_equal(out["enter_monitor"], 1, "integration: monitor flag set")
     assert_equal(out["change_current"], 0, "integration: monitor hold does not rewrite DAC")
     assert_close(out["ioc"], (20.0 * 200.0 * 0.98) / ((399.0 + 398.0) * 0.5), "integration: monitor holds last IOC")
+
+    # 6. MONITOR 期间单通道 -> 双通道突变：应撤销当前闭环并回退重测
+    m = CalcControlModel()
+    drive_to_calc(m, 200.0, 0.0, 400.0)
+    out = m.update(398.0, 2.0, 5000, True, vac_ch1_v=200.0, vac_ch2_v=200.0, vdc_sample_v=400.0)
+    assert_equal(m.state, CalcState.WAIT_SAFE, "integration: monitor single-to-dual jump falls back to WAIT_SAFE")
+    assert_equal(out["need_retest"], 1, "integration: single-to-dual jump requests retest")
+    assert_equal(out["ioc_valid"], 0, "integration: single-to-dual jump clears IOC validity")
+    assert_close(out["ioc"], 0.0, "integration: single-to-dual jump clears IOC target")
+    assert_equal(out["change_current"], 1, "integration: single-to-dual jump actively withdraws current")
+    assert_close(out["set_current_a"], 0.0, "integration: single-to-dual jump withdraws to 0A")
+
+    # 7. MONITOR 期间双通道 -> 单通道突变：应撤销当前闭环并回退重测
+    m = CalcControlModel()
+    drive_to_calc(m, 230.0, 230.0, 400.0)
+    out = m.update(398.0, 2.0, 5000, True, vac_ch1_v=230.0, vac_ch2_v=0.0, vdc_sample_v=400.0)
+    assert_equal(m.state, CalcState.WAIT_SAFE, "integration: monitor dual-to-single jump falls back to WAIT_SAFE")
+    assert_equal(out["need_retest"], 1, "integration: dual-to-single jump requests retest")
+    assert_equal(out["ioc_valid"], 0, "integration: dual-to-single jump clears IOC validity")
+    assert_close(out["ioc"], 0.0, "integration: dual-to-single jump clears IOC target")
+    assert_equal(out["change_current"], 1, "integration: dual-to-single jump actively withdraws current")
+    assert_close(out["set_current_a"], 0.0, "integration: dual-to-single jump withdraws to 0A")
 
     print("    calc_control 与交流线阻闭环集成校验通过。")
 

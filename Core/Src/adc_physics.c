@@ -53,8 +53,8 @@ static Physical_Channel_t s_channels[PHYS_CH_NUM] = {
     
     [PHYS_CH_VO_OUT] = {
         .config = {
-            .physical_max    = 500.0f,  /* 直流满量程母线电压为 500.0V */
-            .pin_max_voltage = 2.50f,   /* 500.0V 对应单片机引脚输入为 2.5V */
+            .physical_max    = 550.0f,  /* 直流满量程母线电压为 550.0V */
+            .pin_max_voltage = 2.50f,   /* 550.0V 对应单片机引脚输入为 2.5V */
             .offset_value    = 0.0f     /* 单向直流电压分压采集 */
         },
         .adc_raw_median      = 0U,

@@ -23,6 +23,7 @@ static float s_ioc_target_a = 0.0f;
 static uint8_t s_ioc_valid = 0U;
 static float s_r_last_locked_ohm = 0.0f; /* 上次锁定的线阻，用于波动校验 */
 static uint8_t s_r_last_valid = 0U;      /* 上次锁定线阻是否有效 */
+static uint8_t s_online_channel_count_locked = 0U; /* 成功闭环时锁存的在线通道数 */
 
 /* 兼容旧的协议/静态检查锚点，保留这些标识符供脚本检索。 */
 #define CALC_CONTROL_IOC_GAIN_K 1.0f
@@ -46,6 +47,7 @@ void Calc_Control_Init(void)
     s_ioc_valid = 0U;
     s_r_last_locked_ohm = 0.0f;
     s_r_last_valid = 0U;
+    s_online_channel_count_locked = 0U;
 
     /* 初始化 3A 稳定判定变量 */
     s_i1_prev_sample = 0.0f;
@@ -105,6 +107,7 @@ void Calc_Control_Update(const Calc_Control_Input_t *input, Calc_Control_Output_
         s_ioc_valid = 0U;
         s_r_last_locked_ohm = 0.0f;
         s_r_last_valid = 0U;
+        s_online_channel_count_locked = 0U;
 
         /* 重置 3A 稳定判定变量 */
         s_i1_prev_sample = 0.0f;
@@ -133,12 +136,7 @@ void Calc_Control_Update(const Calc_Control_Input_t *input, Calc_Control_Output_
         switch (s_state)
         {
             case CALC_CONTROL_WAIT_SAFE:
-                /* 开路自动恢复检测：当锁存状态且物理电流恢复到 >= 1A 时，自动解除锁存 */
-                if ((s_open_circuit_latched != 0U) && (input->co_out_a >= 1.0f))
-                {
-                    s_open_circuit_latched = 0U;
-                }
-                if (input->safe_allowed && (s_open_circuit_latched == 0U))
+                if (input->safe_allowed)
                 {
                     s_state = CALC_CONTROL_SET_3A;
                     keep_running = 1U;
@@ -349,6 +347,7 @@ void Calc_Control_Update(const Calc_Control_Input_t *input, Calc_Control_Output_
                         {
                             s_r_last_locked_ohm = ll_state.r_new_locked_ohm;
                             s_r_last_valid = 1U;
+                            s_online_channel_count_locked = ll_state.online_channel_count;
                             s_ioc_target_a = ll_state.idc_max_limit_a;
                             s_ioc_valid = 1U;
                             output->ioc = s_ioc_target_a;
@@ -377,9 +376,39 @@ void Calc_Control_Update(const Calc_Control_Input_t *input, Calc_Control_Output_
                 break;
 
             case CALC_CONTROL_MONITOR:
-                output->enter_monitor = 1;
-                output->ioc = (s_ioc_valid != 0U) ? s_ioc_target_a : 0.0f;
-                output->ioc_valid = s_ioc_valid;
+                {
+                    LineLimit_Config_t ll_cfg;
+                    uint8_t ch1_online;
+                    uint8_t ch2_online;
+                    uint8_t online_channel_count_current;
+
+                    LineLimit_GetDefaultConfig(&ll_cfg);
+                    ch1_online = (input->vac_ch1_v > ll_cfg.ac_online_threshold_v) ? 1U : 0U;
+                    ch2_online = (input->vac_ch2_v > ll_cfg.ac_online_threshold_v) ? 1U : 0U;
+                    online_channel_count_current = (uint8_t)(ch1_online + ch2_online);
+
+                    if ((s_ioc_valid != 0U) &&
+                        (s_online_channel_count_locked != 0U) &&
+                        (online_channel_count_current != 0U) &&
+                        (online_channel_count_current != s_online_channel_count_locked))
+                    {
+                        s_ioc_target_a = 0.0f;
+                        s_ioc_valid = 0U;
+                        s_online_channel_count_locked = 0U;
+                        output->ioc = 0.0f;
+                        output->ioc_valid = 0U;
+                        output->need_retest = 1U;
+                        output->set_current_a = 0.0f;
+                        output->change_current = 1U;
+                        s_state = CALC_CONTROL_WAIT_SAFE;
+                    }
+                    else
+                    {
+                        output->enter_monitor = 1;
+                        output->ioc = (s_ioc_valid != 0U) ? s_ioc_target_a : 0.0f;
+                        output->ioc_valid = s_ioc_valid;
+                    }
+                }
                 break;
 
             default:

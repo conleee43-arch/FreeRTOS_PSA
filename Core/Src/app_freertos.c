@@ -318,7 +318,10 @@ void StartSampleFilterTask(void *argument)
   static uint32_t print_tick = 0;
 
   DAC_Control_Start(0U);
+  DAC_Control_SetPfcCurrent(0.0f);
+  DAC_Control_UpdatePfcTargetCurrent(0.0f);
   DAC_Control_StartVOC(0U);
+  DAC_Control_SetVocVoltage(2.5f);   // 直接将其设为物理电压 2.5V
 
   HAL_StatusTypeDef init_res = Measure_Init(&hadc1);
   if (init_res != HAL_OK)
@@ -841,7 +844,7 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
     (void)pcTaskName;
 
     portDISABLE_INTERRUPTS();
-    OF_EN_GPIO_Port->BRR = (uint32_t)OF_EN_Pin;
+    OF_EN_GPIO_Port->BSRR = (uint32_t)OF_EN_Pin;
     DAC1->DHR12R1 = 0U;
     for (;;)
     {

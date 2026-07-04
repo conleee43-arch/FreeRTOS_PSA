@@ -29,11 +29,8 @@ typedef struct {
 #define OTP_TRIP_THRESHOLD          85.0f   /* 过温跳闸：>= 85°C */
 #define OTP_RECOVERY_THRESHOLD      75.0f   /* 过温恢复：< 75°C */
 
-#define OVP_TRIP_THRESHOLD          420.0f  /* 过压跳闸：>= 420V */
-#define OVP_RECOVERY_THRESHOLD      390.0f  /* 过压恢复：< 390V */
-
+#define OVP_TRIP_THRESHOLD          520.0f  /* 过压跳闸：>= 520V */
 #define OCP_TRIP_THRESHOLD          12.0f   /* 过流跳闸：>= 12A */
-#define OCP_RECOVERY_THRESHOLD      10.0f   /* 过流恢复：< 10A */
 
 #define RECOVERY_OBSERVE_MS         2000U   /* 自恢复观察期 2000ms */
 

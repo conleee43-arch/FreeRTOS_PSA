@@ -158,7 +158,7 @@ void Measure_Update(void)
         Physics_UpdateChannelRaw(PHYS_CH_V1_IN,  (uint16_t)((v1_inst / 124.4f / vref) * 4095.0f));
         Physics_UpdateChannelRaw(PHYS_CH_V2_IN,  (uint16_t)((v2_inst / 124.4f / vref) * 4095.0f));
         Physics_UpdateChannelRaw(PHYS_CH_CO_OUT, (uint16_t)((i_inst / 6.0f / vref) * 4095.0f));
-        Physics_UpdateChannelRaw(PHYS_CH_VO_OUT, (uint16_t)((vo_inst / 200.0f / vref) * 4095.0f));
+        Physics_UpdateChannelRaw(PHYS_CH_VO_OUT, (uint16_t)((vo_inst / 220.0f / vref) * 4095.0f));
         
         /* 为物理解算模块模拟计算 */
         Physics_ProcessAll(vref);
@@ -496,7 +496,7 @@ uint16_t Measure_GetRawCode(uint8_t channel_idx)
             } else if (channel_idx == 2U) {
                 raw_code = (uint16_t)((Measure_GetCoOut() / 6.0f / vref) * 4095.0f);
             } else if (channel_idx == 3U) {
-                raw_code = (uint16_t)((Measure_GetVoOut() / 200.0f / vref) * 4095.0f);
+                raw_code = (uint16_t)((Measure_GetVoOut() / 220.0f / vref) * 4095.0f);
             } else if (channel_idx == 4U) {
                 raw_code = (uint16_t)(((Measure_GetTemp() - 30.0f) / 100.0f) * 400.0f + 1000.0f);
             } else {
